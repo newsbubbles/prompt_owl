@@ -6,17 +6,20 @@ import traceback
 
 import aiohttp
 
-PROWL_COMPLETIONS_ENDPOINT = os.getenv('PROWL_COMPLETIONS_ENDPOINT') or "/v1/completions"
-API_KEY = os.getenv('PROWL_VENDOR_API_KEY') or None
+from .log import log
+from .error import APIError
 
 class VLLM:
     def __init__(self, base_url, model="mistralai/Mistral-7B-Instruct-v0.2"):
-        self.url = f"{base_url}{PROWL_COMPLETIONS_ENDPOINT}"
-        print(f"[INFO] Endpoint URL: {self.url}, model: {model}")
+        # read env here rather than at import: callers load_dotenv() after importing prowl
+        endpoint = os.getenv('PROWL_COMPLETIONS_ENDPOINT') or "/v1/completions"
+        api_key = os.getenv('PROWL_VENDOR_API_KEY') or None
+        self.url = f"{base_url}{endpoint}"
+        log.info(f"Endpoint URL: {self.url}, model: {model}")
         self.headers = {"Content-Type": "application/json"}
         # If provided, add the API key to the Authorization header.
-        if API_KEY:
-            self.headers["Authorization"] = f"Bearer {API_KEY}"
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
         self.data = {"model": model, "max_tokens": 512, "temperature": 0.0}
         self.usage = {}
 
@@ -68,11 +71,11 @@ class VLLM:
             # Raise an error for bad HTTP status codes
             response.raise_for_status()
         except requests.exceptions.HTTPError as http_err:
-            print(f"[ERROR] HTTP error occurred during run(): {http_err}")
-            print(f"Response content: {response.text if 'response' in locals() else 'No response'}")
-            raise
+            body = response.text if 'response' in locals() else 'No response'
+            log.error(f"HTTP error during run(): {http_err}")
+            raise APIError(response.status_code, str(http_err), data=body)
         except Exception as e:
-            print(f"[ERROR] Error during run() request: {e}")
+            log.error(f"Error during run() request: {e}")
             traceback.print_exc()
             raise
 
@@ -80,15 +83,15 @@ class VLLM:
         try:
             r = response.json()
         except json.JSONDecodeError as jde:
-            print(f"[ERROR] Failed to decode JSON response: {jde}")
-            print(f"Response text: {response.text}")
+            log.error(f"Failed to decode JSON response: {jde}")
+            log.error(f"Response text: {response.text}")
             raise
         # Update usage with elapsed time
         if "usage" in r:
             self.usage = r["usage"]
             self.usage['elapsed'] = en - st
         else:
-            print("[WARNING] No 'usage' key in response.")
+            log.warn("No 'usage' key in response.")
         return r
 
     async def run_async(self, prompt, streaming=False, stream_callback=None, variable_name=None, **kwargs):
@@ -108,27 +111,23 @@ class VLLM:
                 async with session.post(self.url, headers=self.headers, data=json.dumps(data)) as response:
                     if response.status >= 400:
                         content = await response.text()
-                        error_msg = f"[ERROR] HTTP error {response.status} during run_async(): {content}"
-                        print(error_msg)
-                        raise aiohttp.ClientResponseError(
-                            status=response.status,
-                            message=error_msg,
-                            request_info=response.request_info,
-                            history=response.history
-                        )
+                        log.error(f"HTTP {response.status} during run_async(): {content}")
+                        raise APIError(response.status, f"HTTP {response.status} during run_async()", data=content)
 
                     if streaming and stream_callback:
                         tokens, choices, finish_reason = 0, [{} for _ in range(n)], None
                         async for line in response.content:
                             try:
                                 decoded_line = line.decode('utf-8').strip()
+                                if decoded_line.startswith(':'): # OpenRouter keepalive comment
+                                    continue
                                 if decoded_line.startswith('data:'):
                                     decoded_line = decoded_line[5:].strip()
-                                if decoded_line:  # Ensure line is not empty
+                                if decoded_line and decoded_line != '[DONE]':
                                     try:
                                         r = json.loads(decoded_line)
                                     except json.JSONDecodeError:
-                                        print(f"[WARNING] Skipping non-JSON line: {decoded_line}")
+                                        log.warn(f"Skipping non-JSON line: {decoded_line}")
                                         continue
                                     tokens += 1
                                     for i, v in enumerate(r.get('choices', [])):
@@ -138,7 +137,7 @@ class VLLM:
                                         choices[i]['finish_reason'] = v.get('finish_reason')
                                     await stream_callback(r['choices'][0]['text'], finish_reason=choices[0]['finish_reason'], variable_name=variable_name)
                             except Exception as inner_e:
-                                print(f"[ERROR] Error processing streaming data: {inner_e}")
+                                log.error(f"Error processing streaming data: {inner_e}")
                                 traceback.print_exc()
                                 continue
                         el = time.time() - st
@@ -147,26 +146,27 @@ class VLLM:
                         return {'choices': choices, 'usage': u.dict()}
                     else:
                         resp_text = await response.text()
+                        if resp_text.startswith(':') and '{' in resp_text: # keepalives ahead of the body
+                            resp_text = resp_text[resp_text.index('{'):]
                         try:
                             r = json.loads(resp_text)
                         except json.JSONDecodeError as jde:
-                            print(f"[ERROR] Failed to decode JSON in run_async(): {jde}")
-                            print(f"Response text: {resp_text}")
+                            log.error(f"Failed to decode JSON in run_async(): {jde}")
+                            log.error(f"Response text: {resp_text}")
                             raise
                         # Add elapsed time to usage data
                         if 'usage' in r:
                             r['usage']['elapsed'] = time.time() - st
                         else:
-                            print("[WARNING] No 'usage' key in asynchronous response.")
-                            print(r)
+                            log.warn("No 'usage' key in asynchronous response.")
                         return r
+        except APIError:
+            raise
         except aiohttp.ClientError as client_err:
-            print(f"[ERROR] AIOHTTP ClientError during run_async(): {client_err}")
-            traceback.print_exc()
+            log.error(f"AIOHTTP ClientError during run_async(): {client_err}")
             raise
         except Exception as e:
-            print(f"[ERROR] General error during run_async(): {e}")
-            traceback.print_exc()
+            log.error(f"General error during run_async(): {e}")
             raise
 
 if __name__ == "__main__":

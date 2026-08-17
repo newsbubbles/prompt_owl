@@ -1,6 +1,8 @@
-import sys, os, asyncio, re
+import sys, os, json, asyncio, re
 from prowl.lib.prowl import prowl
 from prowl.lib.stack import ProwlStack
+from prowl.lib.log import log
+from prowl.lib.error import APIError, ValidationError
 from prowl.tools.out.tool import OutputTemplateTool
 from prowl.tools.file.tool import FileTool
 from prowl.tools.time.tool import TimeTool
@@ -10,127 +12,165 @@ from prowl.tools.script.tool import ScriptTool
 from prowl.tools.comfy.tool import ComfyTool
 from prowl.tools.each.tool import EachTool
 
-version = "0.1.17"
+version = "0.2.0"
 
-def parse_scripts(scripts:list[str]):
-    sc, flags = [], {}
-    for s in scripts:
-        if s.startswith('-'):
-            k = s[1:]
-            if '=' in k:
-                var, val = k.split('=', 1)
-                print(val)
-                if ',' in val:
-                    print('HAS ,')
-                    flags[var] = [v.encode().decode('unicode_escape') for v in val.split(',')]
-                else:
-                    print('NO,')
-                    flags[var] = val.encode().decode('unicode_escape')
-            else:
-                flags[k] = True
+USAGE = """prowl [scripts...] [flags]
+
+  -folder=PATH[,PATH]  folders to load .prowl scripts from (default prompts/)
+  -model=NAME          model override
+  -stop=A,B            stop sequences (default \\n\\n,\\n#)
+  -atomic              run each script on its own, don't chain completions
+  -input=KEY=VALUE     supply an input variable, repeatable
+  -stdin               read a JSON object of input variables from stdin
+  -json                write one JSON result object to stdout
+  -validate            check the stack and exit, no generation
+  -quiet               silence diagnostics on stderr
+
+Results go to stdout, diagnostics go to stderr.
+Exit: 0 ok, 1 validation failed, 2 generation failed, 3 auth/credit, 4 usage."""
+
+OK, E_VALIDATE, E_GENERATE, E_AUTH, E_USAGE = 0, 1, 2, 3, 4
+
+
+def parse_scripts(argv):
+    scripts, flags, inputs = [], {}, {}
+    for s in argv:
+        if not s.startswith('-'):
+            scripts.append(s)
+            continue
+        k = s.lstrip('-')
+        if '=' not in k:
+            flags[k] = True
+            continue
+        var, val = k.split('=', 1)
+        if var == 'input':
+            key, _, v = val.partition('=')
+            inputs[key] = v
+        elif ',' in val:
+            flags[var] = [v.encode().decode('unicode_escape') for v in val.split(',')]
         else:
-            sc.append(s)
-    return sc, flags
+            flags[var] = val.encode().decode('unicode_escape')
+    return scripts, flags, inputs
+
+
+def emit(obj, as_json):
+    # stdout is results only
+    if as_json:
+        json.dump(obj, sys.stdout, indent=1, default=str)
+        sys.stdout.write("\n")
+        return
+    if not obj.get('ok'):
+        print(obj['error']['message'])
+        return
+    if 'completion' not in obj:
+        print("ok")
+        return
+    print(obj['completion'])
+    for out in obj.get('output') or []:
+        print(f"\n[[{out['task']}]]\n")
+        print(out['output'])
+
+
+def parse_loops(scripts):
+    # `a b ..3` repeats the block three times, carrying variables and completion forward
+    st = ' '.join(scripts)
+    matches = re.findall(r'\.\.(?:\d+|\.{1})', st)
+    if not matches:
+        return None
+    counts = [int(m[2:]) for m in matches if m[2:].isdigit()]
+    parts = [s.strip() for s in re.split(r'(\.\.(?:\d+|\.{1}))', st) if s and s.strip()]
+    blocks = [p for p in parts if p not in matches]
+    return list(zip((b.split(' ') for b in blocks), counts))
+
 
 def main():
+    scripts, flags, inputs = parse_scripts(sys.argv[1:])
+    as_json = 'json' in flags
 
-    if len(sys.argv) > 1:
-        title = f"Prompt Owl (PrOwl) version {version}"
-        border = "-" * len(title)
-        # Run a stack given by the input order in command line args
-        folder = ['prompts/']
-        # get scripts and flags separately
-        scripts, flags = parse_scripts(sys.argv[1:])
-        print(flags)
-        working_dir = os.getcwd()
-        
-        # Set stops from flags 
-        default_stop = ["\n\n"]
-        if 'stop' in flags:
-            default_stop = flags['stop']
-            print(default_stop)
-            
-        # extra folders
-        if 'folder' in flags:
-            folder.extend([flags['folder']] if isinstance(flags['folder'], str) else flags['folder'])
-        
-        # model choice
-        model = None
-        if 'model' in flags:
-            model = flags['model']
-        
-        print(title)
-        print(border)
-        print(f"Working From {working_dir}")
-        print(f"Folder: {folder}")
-        print(f"Scripts: {scripts}")
-        print(border)
+    if 'quiet' in flags:
+        log.sink = lambda level, message: None
 
-        stack = ProwlStack(folder=folder) #, files=scripts)
-        stack.add_tools(OutputTemplateTool(stack), FileTool(), IncludeTool(stack), ScriptTool(stack), ComfyTool(), TimeTool(), ListTool(stack), EachTool(stack))
+    if 'help' in flags or 'h' in flags:
+        print(USAGE)
+        return OK
 
-        loop = False
-        pattern = r'\.\.(?:\d+|\.{1})'
-        st = ' '.join(scripts)
-        matches = re.findall(pattern, st)
-        integers = [int(match[2:]) for match in matches if match.startswith('..') and match[2:].isdigit()]
-        if len(matches) > 0:
-            loop = True
-            split_pattern = r'(\.\.(?:\d+|\.{1}))'
-            splitted = re.split(split_pattern, st)
-            splitted = [s.strip() for s in splitted if s]
-            loops = [(element.split(' '), integers[i]) for i, element in enumerate(splitted) if element not in matches]
-            print(loops)
+    if not scripts:
+        return compose()
 
-        async def once(scripts, variables={}, prefix=""):
-            inputs = {}
-            if 'input' in scripts:
-                print("\nYou included an `input` block. Enter a value for `{user_request}`...")
-                request = input("@>> User Request> ")
-                inputs['user_request'] = request
-            result = await stack.run(scripts, inputs=inputs, stops=default_stop, variables=variables, prefix=prefix, atomic='atomic' in flags, model=model)
-            return result
-            
-        if loop:
-            for l in loops:
-                blocks, runs = l
-                vars, pre = {}, ""
-                for i in range(0, runs):
-                    result = asyncio.run(once(blocks, variables=vars, prefix=pre))
-                    vars = result.variables
-                    pre = result.completion
+    if 'stdin' in flags:
+        try:
+            inputs.update(json.load(sys.stdin))
+        except json.JSONDecodeError as e:
+            log.error(f"-stdin expects a JSON object of input variables: {e}")
+            return E_USAGE
+
+    folder = ['prompts/']
+    if 'folder' in flags:
+        folder.extend([flags['folder']] if isinstance(flags['folder'], str) else flags['folder'])
+
+    log.info(f"Prompt Owl (PrOwl) version {version}")
+    log.info(f"Working from {os.getcwd()}, folders {folder}, scripts {scripts}")
+
+    stack = ProwlStack(folder=folder, silent='quiet' in flags)
+    stack.add_tools(OutputTemplateTool(stack), FileTool(), IncludeTool(stack), ScriptTool(stack),
+                    ComfyTool(), TimeTool(), ListTool(stack), EachTool(stack))
+
+    loops = parse_loops(scripts)
+    flat = [s for block, _ in loops for s in block] if loops else scripts
+
+    errors = stack.validate(flat, stack.process_inputs(inputs), report=True)
+    if errors:
+        emit({'ok': False, 'scripts': flat, 'errors': errors,
+              'error': {'message': errors[0]['message']}}, as_json)
+        return E_VALIDATE
+    if 'validate' in flags:
+        emit({'ok': True, 'scripts': flat, 'errors': []}, as_json)
+        return OK
+
+    async def once(blocks, variables=None, prefix=""):
+        return await stack.run(blocks, inputs=inputs, stops=flags.get('stop'), variables=variables,
+                               prefix=prefix, atomic='atomic' in flags, model=flags.get('model'))
+
+    try:
+        if loops:
+            for blocks, runs in loops:
+                variables, prefix = {}, ""
+                for _ in range(runs):
+                    result = asyncio.run(once(blocks, variables=variables, prefix=prefix))
+                    variables, prefix = result.variables, result.completion
         else:
             result = asyncio.run(once(scripts))
+    except APIError as e:
+        log.error(e.message)
+        emit({'ok': False, 'scripts': flat, 'error': e.to_dict()}, as_json)
+        return E_AUTH if e.fatal() else E_GENERATE
+    except Exception as e:
+        log.error(f"{type(e).__name__}: {e}")
+        emit({'ok': False, 'scripts': flat, 'error': {'message': f"{type(e).__name__}: {e}"}}, as_json)
+        return E_GENERATE
 
-        print('\n[[OUTPUT VARS]]\n')
-        print(result.to_dict())
-        print('\n[[COMPLETION PROMPT]]\n')
-        print(result.completion)
-        print('\n[[USAGE]]\n')
-        print(result.usage.dict())
-        print('\n[[OUTPUT FROM TEMPLATES]]\n')
-        for out in result.output:
-            print(f"\n[[[{out['task']}]]]\n")
-            print(out['output'])
-            
-    else:
-        from prowl.tools.prowl.tool import ProwlProwlTool
-        # Prowl Augmented Prompt Engineering
-        title = f"PrOwl: Augmented Prompt Composer version {version}"
-        border = "-" * len(title)
-        print(title)
-        print(border)
-        # let person write a query and prowl will create a prompt
-        stack = ProwlStack('prompts/world/')
-        stack.add_tools(ProwlProwlTool(stack), ScriptTool(stack))
-        print(border)
-        request = input("> ")
-        r = asyncio.run(stack.run(['prowl'], inputs={
-            'user_request': request,
-            'example_script': 'creative',
-            'variable_name': "{variable_name}",
-        }, stops=["```"]))
-        print(r.completion)
-    
+    emit({'ok': True, 'scripts': flat, **result.to_dict()}, as_json)
+    return OK
+
+
+def compose():
+    # no scripts given: the augmented prompt composer, interactive only
+    from prowl.tools.prowl.tool import ProwlProwlTool
+    if not sys.stdin.isatty():
+        print(USAGE)
+        return E_USAGE
+    log.info(f"PrOwl: Augmented Prompt Composer version {version}")
+    stack = ProwlStack('prompts/world/')
+    stack.add_tools(ProwlProwlTool(stack), ScriptTool(stack))
+    request = input("> ")
+    r = asyncio.run(stack.run(['prowl'], inputs={
+        'user_request': request,
+        'example_script': 'creative',
+        'variable_name': "{variable_name}",
+    }, stops=["```"]))
+    print(r.completion)
+    return OK
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

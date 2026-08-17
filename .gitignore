@@ -1,6 +1,6 @@
-_pycache_
-*/_pycache_*
+__pycache__/
+*.py[cod]
 dist
 build
 prompt_owl.egg-info
-
+.env

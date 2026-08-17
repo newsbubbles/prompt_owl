@@ -10,9 +10,8 @@ from enum import Enum
 from typing import Any
 from .vllm import VLLM
 from .tool import ProwlTool
-
-PROWL_MODEL = os.getenv('PROWL_MODEL')
-PROWL_VLLM_ENDPOINT = os.getenv('PROWL_VLLM_ENDPOINT')
+from .log import log
+from .error import APIError
 
 class prowl:
     
@@ -24,6 +23,9 @@ class prowl:
     PATTERN_CALL = r"\{@(\w+)\((.*?)\)\}"
     # Matches markdown randomness on single-line values for stripping
     PATTERN_STRIP = ' .-_*>#`\n'
+    # One default for every entry point. A blank line, or a markdown header on a new line.
+    # Bare `##` is deliberately not here: it stops on `##` mid-line, inside code and prose.
+    STOPS = ["\n\n", "\n#"]
     
     # Stream levels tell 
     class StreamLevel(Enum):
@@ -212,22 +214,11 @@ class prowl:
     
     @staticmethod
     def mask_prowl_code_blocks(text):
-        # This regex matches code blocks marked with ```prowl
-        prowl_block_regex = r'```prowl.*?```'
-        masked_blocks = {}
-        def masker(match):
-            placeholder = f"[PROWL_BLOCK_{match.start()}]"
-            masked_blocks[placeholder] = match.group()
-            return placeholder
-        masked_text = re.sub(prowl_block_regex, masker, text, flags=re.DOTALL)
-        return masked_text, masked_blocks
+        # Neutralize the braces inside ```prowl blocks so they don't parse as variables.
+        # The mask is the same length as the original, so match offsets stay valid
+        # against the unmasked text that fill() slices.
+        return re.sub(r'```prowl.*?```', lambda m: re.sub(r'[{}]', '\x00', m.group()), text, flags=re.DOTALL)
 
-    @staticmethod
-    def unmask_prowl_code_blocks(text, masked_blocks):
-        for placeholder, block in masked_blocks.items():
-            text = text.replace(placeholder, block)
-        return text
-    
     @staticmethod
     def strip_stops(value, stops):
         # Strip out anything that comes after a stop if that's the case and see if we get an empty
@@ -238,9 +229,10 @@ class prowl:
         return value
     
     @staticmethod
-    async def auto_continue(llm:VLLM, prompt:str, completion:str, var_attr:tuple, finish_reason:str, continue_ratio:float=0.5, stops=["\n\n"], multiline=True, stream_level=StreamLevel.NONE, token_event=None):
+    async def auto_continue(llm:VLLM, prompt:str, completion:str, var_attr:tuple, finish_reason:str, continue_ratio:float=0.5, stops=None, multiline=True, stream_level=StreamLevel.NONE, token_event=None):
         # Automatic continuation on max_token length stop
         variable_name, int_arg, float_arg = var_attr
+        stops = stops or prowl.STOPS
         usage = VLLM.Usage()
         if finish_reason == 'length' and continue_ratio > 0.0 and int_arg > 1:
             # If we have stopped because of length, continue with some portion of max tokens
@@ -249,10 +241,10 @@ class prowl:
             final_value = completion
             # print(f'...>> CONTINUING for {extra_tokens} tokens...')
             r = await llm.run_async(
-                prompt + completion, 
-                max_tokens=extra_tokens, 
-                temperature=float_arg, 
-                stops=stops,
+                prompt + completion,
+                max_tokens=extra_tokens,
+                temperature=float_arg,
+                stop=stops,
                 streaming = stream_level == prowl.StreamLevel.TOKEN,
                 stream_callback = token_event,
                 variable_name=variable_name,
@@ -271,8 +263,8 @@ class prowl:
             usage:VLLM.Usage, 
             llm:VLLM, 
             multiline:bool, 
-            continue_ratio=0.0, 
-            stops=["\n\n"],
+            continue_ratio=0.0,
+            stops=None,
             retry_on_endswith=":",
             stream_level=StreamLevel.NONE,
             token_event=None,
@@ -280,6 +272,7 @@ class prowl:
         """Check the resulting correct and complete value"""
         # Insure that the LLM resulting generation
         variable_name, int_arg, float_arg = variable_attributes
+        stops = stops or prowl.STOPS
         finish_reason = result_choice['finish_reason']
         completion:str = result_choice["text"].strip()
         
@@ -314,9 +307,10 @@ class prowl:
         return completion
 
     @staticmethod
-    async def fill(template:str, stops:list[str]=["\n\n", "\n#", "##"], variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None):
+    async def fill(template:str, stops:list[str]=None, variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None):
         if variables is None:
             variables = {}
+        stops = stops or prowl.STOPS
         # callbacks are dict with 'var_name' as key and function as value
         # TODO add kwarg stop_condition is a dict with {'var_name': match_regex}
         # -> once implemented it will stop and return current results
@@ -327,18 +321,14 @@ class prowl:
         # -> If you are expecting a return value that means a default, and you know the llm will return it sometimes
         # -> Map that generated value to a specified value with this map
         template += "\n" # dirty trick: to make any hanging output multiline :(
-        # mask ```prowl blocks
-        masked_template, masked_blocks = prowl.mask_prowl_code_blocks(template)
-        # get matches on masked template
+        # get matches on the masked template, but slice the real one: the mask preserves offsets
         pattern = re.compile(prowl.PATTERN_FILL)
-        matches = list(pattern.finditer(masked_template))
-        # unmask template
-        template = prowl.unmask_prowl_code_blocks(masked_template, masked_blocks)
+        matches = list(pattern.finditer(prowl.mask_prowl_code_blocks(template)))
         prompt = ""
         last_index = 0
         llm = VLLM(
-            f"{PROWL_VLLM_ENDPOINT}",
-            model=model or PROWL_MODEL,
+            f"{os.getenv('PROWL_VLLM_ENDPOINT')}",
+            model=model or os.getenv('PROWL_MODEL'),
         )
         # accumulate token usage here
         usage = VLLM.Usage()
@@ -368,7 +358,7 @@ class prowl:
                 int_arg, float_arg = int(match.group(2)), float(match.group(3))
                 # Loop the call until a valid generated value is present for that variable
                 if not silent:
-                    print('\n<<', f"{var_name}({int_arg}, {float_arg})", ">> multiline:", multiline, flush=True)
+                    log.info(f"<< {var_name}({int_arg}, {float_arg}) >> multiline: {multiline}")
                 completion = ""
                 max_retries, tries = 4, 0
                 fad = 1.0 - float_arg
@@ -385,10 +375,21 @@ class prowl:
                             variable_name=var_name,
                         )
                         usage.add(r['usage'])
-                    except:
-                        print("LLM CONNECTION ERROR")
-                        await asyncio.sleep(4)
+                    except APIError as e:
+                        if e.fatal():
+                            raise
                         tries += 1
+                        if tries >= max_retries:
+                            raise
+                        log.warn(f"HTTP {e.status} on `{var_name}`, retry {tries}/{max_retries}")
+                        await asyncio.sleep(4)
+                        continue
+                    except Exception as e:
+                        tries += 1
+                        if tries >= max_retries:
+                            raise
+                        log.warn(f"{type(e).__name__} on `{var_name}`: {e}, retry {tries}/{max_retries}")
+                        await asyncio.sleep(4)
                         continue
                     # get the final completion and perform cleanup from 0th choice
                     completion = await prowl.align_conditioning(prompt, (var_name, int_arg, float_arg), r['choices'][0], usage, llm, multiline, continue_ratio=continue_ratio, stops=stops, stream_level=stream_level, token_event=token_event)
@@ -396,10 +397,10 @@ class prowl:
                     if tries >= max_retries:
                         left_context = None if len(prompt) < 30 else prompt[-30:].replace("\n", "\\n")
                         if not silent:
-                            print(f"\n===\n\n{prompt}\n\n===\n", flush=True)
+                            log.error(f"prompt was:\n{prompt}")
                         raise ValueError(f"Cannot Generate Value for `{var_name}`. Context: {left_context}")
                 if not silent:
-                    print(completion, flush=True)
+                    log.info(completion)
                 generated_list = prowl.extract_lists(completion)
                 v = {'value': completion, 'usage': r['usage'], 'arg': (int_arg, float_arg)}
                 if generated_list:

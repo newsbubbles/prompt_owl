@@ -7,6 +7,7 @@ import re, os, glob
 from .prowl import prowl
 from .tool import ProwlTool
 from .vllm import VLLM
+from .log import log
 from .error import ValidationError
 
 CHROMADB_ENABLED = False
@@ -51,9 +52,9 @@ class ProwlStack:
         self.variable_event = variable_event # for streaming at variable level
         self.script_event = script_event # for streaming at script/task level
             
-    def print(self, *args, **kwargs):
+    def print(self, *args):
         if not self.silent:
-            print(*args, **kwargs)
+            log.info(" ".join(str(a) for a in args))
     
     def add_task(self, name, folder='', reinspect=False):
         # add a task to the available tasks pool
@@ -67,8 +68,7 @@ class ProwlStack:
             if reinspect:
                 self.inspect()
         except Exception as e:
-            print(f'Maybe `{name}.prowl` or `{name}.md` prompt not found in folder `{folder}`')
-            print(e)
+            log.warn(f'Maybe `{name}.prowl` or `{name}.md` prompt not found in folder `{folder}`: {e}')
     
     def add_tool(self, tool:ProwlTool, reinspect=True):
         self.tools[tool.name] = tool
@@ -194,7 +194,7 @@ class ProwlStack:
             
             # Add to chromadb
             if self.use_chromadb:
-                print('Adding to ChromaDB:', k)
+                log.info(f'Adding to ChromaDB: {k}')
                 md = {key: ', '.join(map(str, value)) for key, value in v.items()}
                 self.collection.add(
                     documents=[task['code']],
@@ -222,7 +222,6 @@ class ProwlStack:
                 'metadata': r['metadatas'][i],
                 'distance': r['distances'][i]
             }
-            print(m)
             o.append(m)
         return o
 
@@ -307,7 +306,6 @@ class ProwlStack:
                             if tscript:
                                 scriptmap[tscript].append(tvar)
                     if len(varlist) > 0:
-                        print(task, vars, tools)
                         report_error(ValidationError(1004,
                             f"The script `{task}` requires variables not declared before it: {varlist}",
                             data={'task': task, 'type': 'variables', 'required': varlist, 'required_scripts': scriptmap}
@@ -349,7 +347,7 @@ class ProwlStack:
             r = await self.fill(fc, variables=fill.variables)
             return r.completion
 
-    async def run(self, tasks:list[str], atomic:bool=False, variables:dict=None, inputs:dict=None, stops:list[str]=['\n\n', '\n#'], prefix=None, continue_ratio=0.5, stream_level=prowl.StreamLevel.NONE, model:str=None):
+    async def run(self, tasks:list[str], atomic:bool=False, variables:dict=None, inputs:dict=None, stops:list[str]=None, prefix=None, continue_ratio=0.5, stream_level=prowl.StreamLevel.NONE, model:str=None):
         if variables is None:
             variables = {}
         if inputs:
@@ -405,8 +403,8 @@ class ProwlStack:
     # pass fill for tools instantiated with kwarg stack=
     async def fill(self, 
             template:str, 
-            stops:list[str]=["\n\n", "\n#", "##"], 
-            variables:dict=None, 
+            stops:list[str]=None,
+            variables:dict=None,
             callbacks:dict=None, 
             stop_event=None, 
             token_event=None, 
