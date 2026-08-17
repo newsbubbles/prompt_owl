@@ -150,7 +150,7 @@ async function check() {
   f.append(el('span', null, `${v.declarations} declarations`))
   f.append(el('span', v.over_budget ? 'bad' : null, `≤ ${v.max_completion_tokens.toLocaleString()} completion tokens`))
   f.append(el('span', v.ok ? 'ok' : 'bad', v.ok ? 'valid' : `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''}`))
-  showErrors(v.errors, 'stack')
+  showErrors(v.errors)
   $('#run').disabled = !v.ok || v.over_budget
 }
 
@@ -207,7 +207,7 @@ async function go() {
         live.append(el('span', 'sys', `\n■ ${d.task}\n`))
         current = null
       } else if (ev === 'error') {
-        showErrors(d.errors || [], 'run', d.failed_variable)
+        showErrors(d.errors || [], d.failed_variable)
         showPane('errors')
       } else if (ev === 'done') {
         S.result = d
@@ -215,7 +215,7 @@ async function go() {
       }
     })
   } catch (e) {
-    showErrors([{message: String(e.message || e)}], 'run')
+    showErrors([{message: String(e.message || e)}])
     showPane('errors')
   } finally {
     $('#run').hidden = false; $('#stop').hidden = true; S.run = null
@@ -257,6 +257,7 @@ function settle(d) {
   renderVariables(d)
   renderRaw(d)
   renderUsage(d.usage)
+  showErrors([])          // a clean run clears the marker a previous failure left on the tab
 }
 
 function renderVariables(d) {
@@ -290,9 +291,11 @@ function renderVariables(d) {
   }
 }
 
-function showErrors(errors, where, failed) {
+function showErrors(errors, failed) {
   const p = $('#pane-errors'); p.replaceChildren()
-  if (!errors || !errors.length) { p.append(el('div', 'hint', 'No errors.')); return }
+  errors = errors || []
+  document.querySelector('[data-pane="errors"]').classList.toggle('has', errors.length > 0)
+  if (!errors.length) { p.append(el('div', 'hint', 'No errors.')); return }
   if (failed) p.append(el('div', 'hint bad', `generation failed on \`${failed}\``))
   for (const e of errors) {
     const b = el('div', 'err')
@@ -301,8 +304,6 @@ function showErrors(errors, where, failed) {
     if (e.code && S.lang && S.lang.codes[e.code]) b.append(el('div', 'muted', S.lang.codes[e.code]))
     p.append(b)
   }
-  const tab = document.querySelector('[data-pane="errors"]')
-  tab.classList.toggle('has', where === 'stack' ? errors.length > 0 : true)
 }
 
 function renderRaw(d) {

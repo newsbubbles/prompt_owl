@@ -36,11 +36,12 @@ h1 { margin: 0 6px 0 0; font-size: 15px; font-weight: 600; }
 h1 span { color: var(--dim); font-weight: 400; }
 
 select, input, textarea, button { font-family: inherit; font-size: 13px; color: var(--ink); }
-select, header input {
+/* deliberately not `header input`: that also matches the atomic checkbox and stretches it */
+select, #model {
   background: var(--sunk); border: 1px solid var(--line); border-radius: 6px;
   padding: 5px 8px; font-family: var(--mono); font-size: 12px;
 }
-header input { width: 240px; }
+#model { width: 240px; }
 .check { display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 12px; }
 button { cursor: pointer; }
 .ghost {
