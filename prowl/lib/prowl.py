@@ -203,6 +203,13 @@ class prowl:
         if not pos:
             raise ValidationError(1006, f"`{var_name}` declares no max_tokens",
                 data={'variable': var_name, 'args': text})
+        if len(pos) > 2:
+            # almost always an unquoted multi-value option: stop=.,\n splits on the comma and
+            # leaves `\n` stranded here. Dropping it silently is the bug this class of check exists
+            # to prevent, so say so and name the fix.
+            raise ValidationError(1007,
+                f"`{var_name}` has stray argument(s) {pos[2:]}: quote multi-value options, e.g. stop=\".,\\n\"",
+                data={'variable': var_name, 'args': text, 'stray': pos[2:]})
         try:
             max_tokens = int(pos[0])
             temperature = float(pos[1]) if len(pos) > 1 else prowl.TEMPERATURE
