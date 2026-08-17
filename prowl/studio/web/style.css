@@ -32,6 +32,7 @@ header {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--panel);
 }
+#mark { display: block; flex: none; }
 h1 { margin: 0 6px 0 0; font-size: 15px; font-weight: 600; }
 h1 span { color: var(--dim); font-weight: 400; }
 

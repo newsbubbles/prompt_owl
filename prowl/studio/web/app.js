@@ -412,7 +412,9 @@ function renderVariables(d) {
   const p = $('#pane-variables'); p.replaceChildren()
   const t = el('table')
   const hdr = el('tr')
-  for (const h of ['name', 'type', 'value', 'tok/max', 'temp', 'flags']) hdr.append(el('th', null, h))
+  // `ctx` is the prompt each declaration was generated against. In one growing document it climbs
+  // with every value before it, which is the cost of conditioning stated plainly.
+  for (const h of ['name', 'type', 'value', 'ctx', 'tok/max', 'temp', 'flags']) hdr.append(el('th', null, h))
   t.append(hdr)
   for (const [name, v] of Object.entries(d.variables || {})) {
     const declared = v.arg && v.arg[0] != null      // an input has no (max_tokens, temperature)
@@ -421,6 +423,7 @@ function renderVariables(d) {
     tr.append(el('td', 'type', v.type || ''))
     const val = el('td', 'val'); val.append(el('span', null, (v.value || '').slice(0, 160)))
     tr.append(val)
+    tr.append(el('td', 'num', declared && v.usage ? v.usage.prompt_tokens.toLocaleString() : ''))
     tr.append(el('td', 'num', declared ? `${v.usage ? v.usage.completion_tokens : 0}/${v.arg[0]}` : ''))
     tr.append(el('td', 'num', declared ? String(v.arg[1]) : ''))
     const flags = el('td', 'flags')
@@ -519,5 +522,14 @@ addEventListener('keydown', e => {
     else if (!$('#run').disabled) save().then(go)
   }
 })
+
+// The real owl lives on the README as a GitHub attachment rather than in the repo, so the SVG is a
+// stand-in: drop a logo.png beside it and both the mark and the tab icon pick it up.
+fetch('/logo.png', {method: 'HEAD'}).then(r => {
+  if (!r.ok) return
+  $('#mark').src = '/logo.png'
+  $('#favicon').href = '/logo.png'
+  $('#favicon').type = 'image/png'
+}).catch(() => {})
 
 boot().catch(e => { $('#status').textContent = 'error: ' + e.message; $('#status').classList.add('bad') })

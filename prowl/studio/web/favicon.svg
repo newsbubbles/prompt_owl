@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="prowl">
+  <!-- Placeholder. Drop a logo.png next to this file and the studio uses that instead:
+       the real mark is a GitHub user-attachment on the README, not a file in the repo. -->
+  <path d="M13 17 L17 5 L27 13 Z" fill="#4aa3e8"/>
+  <path d="M51 17 L47 5 L37 13 Z" fill="#4aa3e8"/>
+  <ellipse cx="32" cy="35" rx="22" ry="24" fill="#4aa3e8"/>
+  <circle cx="23" cy="29" r="9.5" fill="#ffffff"/>
+  <circle cx="41" cy="29" r="9.5" fill="#ffffff"/>
+  <circle cx="23.5" cy="29" r="4.6" fill="#0e1014"/>
+  <circle cx="41.5" cy="29" r="4.6" fill="#0e1014"/>
+  <path d="M32 34 l-4.2 6.4 h8.4 z" fill="#f2a33c"/>
+  <path d="M20 49 q12 8.5 24 0" stroke="#2b7fc4" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+</svg>
