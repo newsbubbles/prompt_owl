@@ -61,7 +61,7 @@ async function boot() {
 
   const pick = $('#ws-pick')
   pick.replaceChildren(...ws.workspaces.map(w => el('option', null, w)))
-  if (ws.workspaces.length) { S.ws = ws.workspaces[0]; pick.value = S.ws; await loadBrowser() }
+  if (ws.workspaces.length) { S.ws = ws.workspaces[0]; pick.value = S.ws; restoreInputs(); await loadBrowser() }
 }
 
 async function loadBrowser() {
@@ -70,15 +70,22 @@ async function loadBrowser() {
   S.tools = d.tools || []
   const ul = $('#browser'); ul.replaceChildren()
   for (const s of d.scripts) {
-    const li = el('li', 'row' + (S.stack.includes(s.name) ? ' in' : ''))
-    li.append(el('span', 'name', s.name))
+    const li = el('li')
+    // a real button, so the list is reachable by keyboard and announces itself as clickable
+    const b = el('button', 'row' + (S.stack.includes(s.name) ? ' in' : ''))
+    b.type = 'button'
+    b.title = S.stack.includes(s.name) ? `${s.name} is in the stack` : `add ${s.name} to the stack`
+    b.append(el('span', 'name', s.name))
     if (s.folder && !s.folder.endsWith(S.ws + '/') && !s.folder.endsWith(S.ws + '\\'))
-      li.append(el('span', 'sub', s.folder.replace(/[\\/]$/, '').split(/[\\/]/).pop()))
-    if (s.errors.length) li.append(el('span', 'tag bad', String(s.errors.length)))
-    if (s.has_prout) li.append(el('span', 'tag', 'prout'))
-    li.onclick = () => { if (!S.stack.includes(s.name)) S.stack.push(s.name); openScript(s.name) }
+      b.append(el('span', 'sub', s.folder.replace(/[\\/]$/, '').split(/[\\/]/).pop()))
+    if (s.errors.length) b.append(el('span', 'tag bad', String(s.errors.length)))
+    if (s.has_prout) b.append(el('span', 'tag', 'prout'))
+    b.onclick = () => { if (!S.stack.includes(s.name)) S.stack.push(s.name); openScript(s.name) }
+    li.append(b)
     ul.append(li)
   }
+  if (!d.scripts.length)
+    ul.append(el('li', 'muted', 'No .prowl files here yet — press + to make one.'))
   for (const [name, folders] of Object.entries(d.collisions || {}))
     ul.append(el('li', 'muted bad', `name collision: ${name} in ${folders.join(', ')}`))
   renderStack()
@@ -96,11 +103,27 @@ function renderStack() {
     if (i) box.append(el('span', 'arrow', '→'))
     const chip = el('div', 'chip' + (name === S.open ? ' on' : '') + (S.dirty.has(name) ? ' dirty' : ''))
     chip.draggable = true
+    chip.tabIndex = 0
+    chip.title = `${name} — position ${i + 1} of ${S.stack.length}\ndrag to reorder, or Alt+← / Alt+→\nDelete removes it from the stack`
     chip.append(el('span', 'ord', String(i + 1)), el('span', 'name', name))
+    const drop = () => { S.stack.splice(i, 1); if (S.open === name) S.open = S.stack[0] || null; renderStack(); openScript(S.open) }
     const x = el('button', 'x', '×')
-    x.onclick = e => { e.stopPropagation(); S.stack.splice(i, 1); if (S.open === name) S.open = S.stack[0] || null; renderStack(); openScript(S.open) }
+    x.type = 'button'
+    x.title = `remove ${name} from the stack`
+    x.onclick = e => { e.stopPropagation(); drop() }
     chip.append(x)
     chip.onclick = () => openScript(name)
+    // reordering is the main thing this bar is for, so it cannot be mouse-only
+    chip.onkeydown = e => {
+      const to = e.key === 'ArrowLeft' ? i - 1 : e.key === 'ArrowRight' ? i + 1 : null
+      if (e.altKey && to !== null && to >= 0 && to < S.stack.length) {
+        e.preventDefault()
+        const [m] = S.stack.splice(i, 1); S.stack.splice(to, 0, m)
+        renderStack()
+        ;[...document.querySelectorAll('#stack .chip')][to]?.focus()
+      } else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); drop() }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openScript(name) }
+    }
     chip.ondragstart = e => { dragFrom = i; e.dataTransfer.effectAllowed = 'move' }
     chip.ondragover = e => { e.preventDefault(); chip.classList.add('over') }
     chip.ondragleave = () => chip.classList.remove('over')
@@ -229,14 +252,14 @@ async function save() {
 // ------------------------------------------------------- validate + forecast
 
 let checkTimer = null
-function refresh() { clearTimeout(checkTimer); checkTimer = setTimeout(check, 150) }
+function refresh() { clearTimeout(checkTimer); checkTimer = setTimeout(check, 250) }
 
 async function check() {
   const f = $('#forecast')
-  if (!S.ws || !S.stack.length) { f.replaceChildren(); $('#inputs').replaceChildren(); return }
+  if (!S.ws || !S.stack.length) { S.needs = []; f.replaceChildren(); $('#inputs').replaceChildren(); return }
   const v = await api(`/w/${S.ws}/validate`, {scripts: S.stack, inputs: S.inputs})
   S.needs = v.inputs_required
-  renderInputs()
+  renderInputs(v.inputs_missing || [])
 
   f.replaceChildren()
   f.append(el('span', null, `${S.stack.length} scripts`))
@@ -244,23 +267,54 @@ async function check() {
   f.append(el('span', v.over_budget ? 'bad' : null, `≤ ${v.max_completion_tokens.toLocaleString()} completion tokens`))
   f.append(el('span', v.ok ? 'ok' : 'bad', v.ok ? 'valid' : `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''}`))
   showErrors(v.errors)
-  $('#run').disabled = !v.ok || v.over_budget
+  const run = $('#run')
+  run.disabled = !v.ok || v.over_budget
+  // a disabled button with no explanation is a dead end; say which thing is in the way
+  run.title = v.over_budget ? `worst case ${v.max_completion_tokens.toLocaleString()} tokens is over the ${v.budget.toLocaleString()} budget`
+    : (v.inputs_missing || []).length ? `fill in ${v.inputs_missing.join(', ')}`
+    : !v.ok ? `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''} — see the Errors tab`
+    : 'run the stack  (Ctrl+Enter)'
   paint()   // what counts as bound, as an input, or as dangling depends on the stack order
 }
 
-function renderInputs() {
-  const box = $('#inputs'); box.replaceChildren()
-  if (!S.needs.length) return
-  box.append(el('span', 'label', 'inputs'))
-  for (const name of S.needs) {
-    const wrap = el('label', 'input')
-    wrap.append(el('span', null, name))
-    const inp = el('input')
-    inp.value = S.inputs[name] || ''
-    inp.oninput = () => { S.inputs[name] = inp.value; refresh() }
-    wrap.append(inp)
-    box.append(wrap)
+const grow = t => { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px' }
+
+// Rebuilt only when the set of names changes. Replacing the fields on every keystroke throws away
+// focus and the caret with them, which is what made this panel unusable.
+function renderInputs(missing) {
+  const box = $('#inputs')
+  const have = [...box.querySelectorAll('[data-input]')].map(n => n.dataset.input)
+  const same = have.length === S.needs.length && have.every((n, i) => n === S.needs[i])
+  if (!same) {
+    box.replaceChildren()
+    if (S.needs.length) {
+      box.append(el('span', 'label', 'inputs'))
+      for (const name of S.needs) {
+        const wrap = el('label', 'input')
+        wrap.dataset.input = name
+        wrap.append(el('span', 'nm', name))
+        const ta = el('textarea')
+        ta.rows = 1; ta.spellcheck = false; ta.value = S.inputs[name] || ''
+        ta.oninput = () => { S.inputs[name] = ta.value; grow(ta); persistInputs(); refresh() }
+        wrap.append(ta)
+        box.append(wrap)
+        grow(ta)
+      }
+    }
   }
+  const gone = new Set(missing)
+  for (const wrap of box.querySelectorAll('[data-input]'))
+    wrap.classList.toggle('missing', gone.has(wrap.dataset.input))
+}
+
+// Inputs are per workspace and survive a reload: retyping the same topic to try one more model
+// is the kind of friction that stops you trying one more model.
+const inputKey = () => `prowl.studio.inputs.${S.ws}`
+function persistInputs() {
+  try { localStorage.setItem(inputKey(), JSON.stringify(S.inputs)) } catch (e) { /* private mode */ }
+}
+function restoreInputs() {
+  try { S.inputs = JSON.parse(localStorage.getItem(inputKey()) || '{}') } catch (e) { S.inputs = {} }
 }
 
 // ---------------------------------------------------------------- the run
@@ -422,7 +476,7 @@ function showPane(name) {
 
 // ---------------------------------------------------------------- wiring
 
-$('#ws-pick').onchange = async e => { S.ws = e.target.value; S.stack = []; S.open = null; await loadBrowser() }
+$('#ws-pick').onchange = async e => { S.ws = e.target.value; S.stack = []; S.open = null; restoreInputs(); await loadBrowser() }
 $('#ws-new').onclick = async () => {
   const name = prompt('workspace name'); if (!name) return
   try { await api('/workspaces', {name}); const d = await api('/workspaces')
@@ -456,5 +510,14 @@ $('#atomic').onchange = renderStack
 $('#run').onclick = () => save().then(go)
 $('#stop').onclick = halt
 for (const b of document.querySelectorAll('.tabbar.sub button')) b.onclick = () => showPane(b.dataset.pane)
+
+// Ctrl/Cmd+Enter runs from anywhere, including from inside an input you have just filled in.
+addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    if (!$('#stop').hidden) halt()
+    else if (!$('#run').disabled) save().then(go)
+  }
+})
 
 boot().catch(e => { $('#status').textContent = 'error: ' + e.message; $('#status').classList.add('bad') })

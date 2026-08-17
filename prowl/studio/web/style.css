@@ -79,8 +79,11 @@ aside { border-right: 1px solid var(--line); background: var(--panel); overflow:
 .row {
   display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px;
   cursor: pointer; font: 12.5px var(--mono);
+  width: 100%; text-align: left; background: none; border: 0; color: inherit;
 }
 .row:hover { background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.row:focus-visible, .chip:focus-visible, .tabbar.sub button:focus-visible,
+.go:focus-visible, .ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .row.in .name { color: var(--accent); }
 .row .sub { color: var(--dim); font-size: 10px; }
 .muted { padding: 6px 10px; color: var(--dim); font-size: 12px; }
@@ -196,11 +199,17 @@ aside { border-right: 1px solid var(--line); background: var(--panel); overflow:
 }
 .inputs:not(:empty) { padding: 8px 14px; }
 .inputs .label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
-.inputs .input { display: flex; align-items: center; gap: 6px; font: 12px var(--mono); color: var(--dim); }
-.inputs input {
-  background: var(--sunk); border: 1px solid var(--line); border-radius: 5px;
-  padding: 4px 7px; font: 12px var(--mono); width: 200px;
+.inputs .input { display: flex; align-items: flex-start; gap: 6px; font: 12px var(--mono); color: var(--dim); }
+.inputs .nm { padding-top: 5px; white-space: nowrap; }
+.inputs textarea {
+  background: var(--sunk); border: 1px solid var(--line); border-radius: 5px; color: var(--ink);
+  padding: 4px 7px; font: 12px/1.5 var(--mono); width: 240px; resize: none; overflow: hidden;
+  min-height: 26px;
 }
+.inputs textarea:focus { outline: 0; border-color: var(--accent); }
+/* still empty, and the stack cannot run without it */
+.inputs .input.missing textarea { border-color: color-mix(in oklab, var(--bad) 60%, var(--line)); }
+.inputs .input.missing .nm { color: var(--bad); }
 .forecast {
   display: flex; gap: 16px; padding: 7px 14px; border-top: 1px solid var(--line);
   background: var(--panel); font: 11.5px var(--mono); color: var(--dim);

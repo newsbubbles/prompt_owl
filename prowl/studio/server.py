@@ -119,17 +119,21 @@ def delete_script(ws: str, name: str):
 @app.post('/api/w/{ws}/validate')
 def validate(ws: str, body: CheckBody):
     s = stack(ws)
-    errors, decls, cap = core.check(s, body.scripts, body.inputs)
-    # What the caller must still supply: references nothing earlier in this order declares. This
-    # is the set the inputs panel is generated from, so it follows validate's own per-script rule
-    # rather than a second opinion about it.
+    # An empty box is not an answer. Counting it as supplied silences the very error that says the
+    # variable has nothing behind it, and lets a run start with a blank spliced into the prompt.
+    supplied = {k: v for k, v in body.inputs.items() if v.strip()}
+    errors, decls, cap = core.check(s, body.scripts, supplied)
+
+    # What the stack TAKES, which is a property of the scripts and their order and nothing else.
+    # Deriving this from what is still missing instead makes the list shrink as it is filled in,
+    # and a form that deletes the field you are typing into is not a form.
     declared, needs = set(), []
     for name in body.scripts:
         if name not in s.tasks:
             continue
         vars, _ = s.get_inspect(name)
         for ref in sorted(set(vars['referenced']) - set(vars['declared'])):
-            if ref not in declared and ref not in body.inputs and ref not in needs:
+            if ref not in declared and ref not in needs:
                 needs.append(ref)
         declared.update(vars['declared'])
     cap_budget = core.budget()
@@ -141,6 +145,7 @@ def validate(ws: str, body: CheckBody):
         'budget': cap_budget,
         'over_budget': cap > cap_budget,
         'inputs_required': needs,
+        'inputs_missing': [n for n in needs if n not in supplied],
         'collisions': workspace.collisions(ws),
     }
 
@@ -175,9 +180,11 @@ async def run(ws: str, body: RunBody):
     s.stop_event, s.token_event = stop_event, token_event
     s.variable_event, s.script_event = variable_event, script_event
 
+    inputs = {k: v for k, v in body.inputs.items() if v.strip()}   # as in validate: blank is unset
+
     async def drive():
         try:
-            errors, decls, cap = core.check(s, body.scripts, body.inputs)
+            errors, decls, cap = core.check(s, body.scripts, inputs)
             if errors:
                 await q.put(('error', {'errors': errors}))
                 return
@@ -188,7 +195,7 @@ async def run(ws: str, body: RunBody):
                 return
             await q.put(('start', {'scripts': body.scripts, 'declarations': decls,
                                    'max_completion_tokens': cap, 'model': body.model}))
-            r = await s.run(body.scripts, inputs=body.inputs, atomic=body.atomic,
+            r = await s.run(body.scripts, inputs=inputs, atomic=body.atomic,
                             model=body.model, extra=body.extra,
                             continue_ratio=body.continue_ratio,
                             stream_level=prowl.StreamLevel.TOKEN)
