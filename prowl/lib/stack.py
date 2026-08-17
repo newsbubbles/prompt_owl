@@ -431,7 +431,7 @@ class ProwlStack:
             if out:
                 output.append({'task': task, 'output': out})
             # Handle script streaming level events per fill
-            if self.script_event and stream_level.value == prowl.StreamLevel.SCRIPT.value:
+            if self.script_event and stream_level.covers(prowl.StreamLevel.SCRIPT):
                 await self.script_event(task, fill, output=out)
 
         return prowl.Return(completion, variables, usage, output=output)

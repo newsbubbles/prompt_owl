@@ -6,122 +6,44 @@
 
 <header>
   <h1>prowl <span>studio</span></h1>
+  <select id="ws-pick" title="workspace"></select>
+  <button id="ws-new" class="ghost" title="new workspace">+</button>
+  <input id="model" placeholder="model" spellcheck="false">
+  <label class="check"><input type="checkbox" id="atomic"> atomic</label>
+  <button id="run" class="go">▶ Run</button>
+  <button id="stop" class="go stop" hidden>■ Stop</button>
   <div id="status" class="pill">connecting…</div>
 </header>
 
 <main>
   <aside>
-    <div class="head">
-      <span>workspaces</span>
-      <button id="new-ws" title="new workspace">+</button>
-    </div>
-    <ul id="workspaces" class="list"></ul>
-    <div class="head"><span>scripts</span></div>
-    <ul id="scripts" class="list"></ul>
+    <div class="head"><span>workspace</span><button id="script-new" class="ghost">+</button></div>
+    <ul id="browser" class="list"></ul>
   </aside>
 
-  <section>
-    <div id="detail" class="empty">Pick a script.</div>
+  <section class="center">
+    <div id="stack" class="stack">
+      <div class="stack-empty">Click a script to add it to the stack.</div>
+    </div>
+    <div id="tabbar" class="tabbar"></div>
+    <textarea id="editor" spellcheck="false" placeholder="Select a script from the stack."></textarea>
+    <div id="inputs" class="inputs"></div>
+    <div id="forecast" class="forecast"></div>
+  </section>
+
+  <section class="results">
+    <div class="tabbar sub">
+      <button data-pane="document" class="on">Document</button>
+      <button data-pane="variables">Variables</button>
+      <button data-pane="errors">Errors</button>
+      <button data-pane="raw">Raw</button>
+    </div>
+    <div id="pane-document" class="pane"><div class="hint">Run the stack to see the document it builds.</div></div>
+    <div id="pane-variables" class="pane" hidden></div>
+    <div id="pane-errors" class="pane" hidden></div>
+    <div id="pane-raw" class="pane" hidden></div>
+    <div id="usage" class="usage"></div>
   </section>
 </main>
 
-<script type="module">
-const $ = s => document.querySelector(s)
-const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x !== undefined) n.textContent = x; return n }
-const api = async (p, o) => {
-  const r = await fetch('/api' + p, o && {method: o.method || 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(o.body)})
-  const d = await r.json()
-  if (!r.ok) throw new Error(d.error || d.detail || r.status)
-  return d
-}
-
-let LANG = null, WS = null
-
-async function boot() {
-  const [h, lang] = await Promise.all([api('/health'), api('/lang')])
-  LANG = lang
-  $('#status').textContent = `${Object.keys(lang.types).length} types · ${lang.options.length} options · budget ${h.budget.toLocaleString()}`
-  $('#status').title = h.root
-  await loadWorkspaces()
-}
-
-async function loadWorkspaces() {
-  const d = await api('/workspaces')
-  const ul = $('#workspaces'); ul.replaceChildren()
-  if (!d.workspaces.length) ul.append(el('li', 'muted', 'none yet'))
-  for (const w of d.workspaces) {
-    const li = el('li', 'row' + (w === WS ? ' on' : ''), w)
-    li.onclick = () => selectWorkspace(w)
-    ul.append(li)
-  }
-}
-
-async function selectWorkspace(w) {
-  WS = w
-  await loadWorkspaces()
-  const d = await api(`/w/${w}/scripts`)
-  const ul = $('#scripts'); ul.replaceChildren()
-  if (!d.scripts.length) ul.append(el('li', 'muted', 'no .prowl files'))
-  for (const s of d.scripts) {
-    const li = el('li', 'row')
-    li.append(el('span', null, s.name))
-    if (s.errors.length) li.append(el('span', 'tag bad', `${s.errors.length}`))
-    if (s.has_prout) li.append(el('span', 'tag', 'prout'))
-    li.onclick = () => showScript(s.name)
-    ul.append(li)
-  }
-  for (const [name, folders] of Object.entries(d.collisions || {}))
-    ul.append(el('li', 'muted bad', `collision: ${name} in ${folders.join(', ')}`))
-}
-
-async function showScript(name) {
-  const [s, v] = await Promise.all([
-    api(`/w/${WS}/script/${name}`),
-    api(`/w/${WS}/validate`, {body: {scripts: [name], inputs: {}}}),
-  ])
-  const d = $('#detail'); d.className = ''; d.replaceChildren()
-  d.append(el('h2', null, name))
-
-  const stat = el('div', 'stats')
-  stat.append(el('span', null, `${v.declarations} declarations`))
-  stat.append(el('span', null, `≤ ${v.max_completion_tokens.toLocaleString()} completion tokens`))
-  if (v.inputs_required.length) stat.append(el('span', 'tag', `inputs: ${v.inputs_required.join(', ')}`))
-  d.append(stat)
-
-  for (const e of v.errors || []) {
-    const b = el('div', 'err')
-    b.append(el('code', null, String(e.code)))
-    b.append(el('span', null, ` ${e.message}`))
-    b.append(el('div', 'muted', LANG.codes[e.code] || ''))
-    d.append(b)
-  }
-
-  const tbl = el('table')
-  tbl.append(el('caption', null, 'what fill() will act on'))
-  const hdr = el('tr')
-  for (const h of ['', 'name', 'type', 'args', 'shape']) hdr.append(el('th', null, h))
-  tbl.append(hdr)
-  for (const o of s.outline) {
-    const tr = el('tr', o.kind)
-    tr.append(el('td', 'muted', o.kind === 'declaration' ? '◆' : '·'))
-    tr.append(el('td', null, o.name))
-    tr.append(el('td', 'type', o.type || ''))
-    tr.append(el('td', 'args', o.args || ''))
-    tr.append(el('td', 'shape', o.shape || ''))
-    tbl.append(tr)
-  }
-  d.append(tbl)
-
-  const pre = el('pre', 'src', s.prowl)
-  d.append(el('h3', null, 'source'), pre)
-}
-
-$('#new-ws').onclick = async () => {
-  const name = prompt('workspace name')
-  if (!name) return
-  try { await api('/workspaces', {body: {name}}); await loadWorkspaces() }
-  catch (e) { alert(e.message) }
-}
-
-boot().catch(e => { $('#status').textContent = 'error: ' + e.message; $('#status').classList.add('bad') })
-</script>
+<script type="module" src="/app.js"></script>

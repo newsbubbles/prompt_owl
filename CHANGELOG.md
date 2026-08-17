@@ -86,6 +86,16 @@
   `prowl/studio/core.py` is the single definition of "assemble a stack and check it", and
   `prowl/mcp.py` now imports it rather than keeping its own.
 
+- **Stream levels are cumulative.** `StreamLevel.covers()` orders them
+  `none < script < variable < token`, so asking for tokens also delivers the settled variable and
+  the finished script. They were exclusive, which meant a caller wanting live tokens *and* the
+  variable objects they resolve into — every UI — could have one or the other.
+
+- **Variables carry `span`**, the offsets where the value landed in the finished document. A run is
+  one token sequence whose spans happen to be named; without offsets that is a claim rather than
+  something you can look at. In a non-atomic stack each fill prepends the previous completion
+  verbatim, so spans stay valid against the final document.
+
 - **`prowl.shape(template, start, end)`** returns `'block'` or `'inline'` for a declaration, using
   the three-character rule `fill` has always used inline. Named so that anything showing a script
   to a human can show the shape too, and agree with `fill` when it does — a missing blank line

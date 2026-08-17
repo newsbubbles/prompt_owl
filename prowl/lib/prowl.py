@@ -72,12 +72,18 @@ class prowl:
     TRUE = ('yes', 'true', 'y', '1', 'correct', 'affirmative')
     FALSE = ('no', 'false', 'n', '0', 'incorrect', 'negative')
 
-    # Stream levels tell 
+    # Stream levels are cumulative: asking for tokens also gets you the settled variable and the
+    # finished script. They used to be exclusive, so a caller wanting live tokens AND the variable
+    # objects they resolve into -- which is every UI -- could not have both.
     class StreamLevel(Enum):
         TOKEN = 'token'
         VARIABLE = 'variable'
         SCRIPT = 'script'
         NONE = 'none'
+
+        def covers(self, other):
+            rank = ('none', 'script', 'variable', 'token')
+            return rank.index(self.value) >= rank.index(other.value)
     
     @staticmethod
     def load(path):
@@ -90,9 +96,12 @@ class prowl:
         return None
 
     class Variable:
-        def __init__(self, name:str=None, arg:tuple=None, value:str=None, list:list=None, data:dict=None, usage:VLLM.Usage=None, type:str=None, truncated:bool=False):
+        def __init__(self, name:str=None, arg:tuple=None, value:str=None, list:list=None, data:dict=None, usage:VLLM.Usage=None, type:str=None, truncated:bool=False, span:tuple=None):
             self.type = type
             self.truncated = truncated # the model was still going when the budget ran out
+            # where this value landed in the finished document. A run is one token sequence whose
+            # spans happen to be named, and without offsets that claim is not inspectable.
+            self.span = span
             self.name = name
             max_tokens, temperature = (None, None) if not arg else arg
             self.max_tokens = max_tokens
@@ -111,7 +120,7 @@ class prowl:
             self.new = False
             self.history.append(self.to_dict())
             self.name, self.value, self.list, self.data = variable.name, variable.value, variable.list, variable.data
-            self.type, self.truncated = variable.type, variable.truncated
+            self.type, self.truncated, self.span = variable.type, variable.truncated, variable.span
 
         def first(self):
             return self if self.new else prowl.Variable(**self.history[0])
@@ -137,6 +146,8 @@ class prowl:
                 d['type'] = self.type
             if self.truncated:
                 d['truncated'] = True
+            if self.span:
+                d['span'] = [self.span[0], self.span[1]]
             if history:
                 d['history'] = self.hist()
             if self.usage:
@@ -329,7 +340,7 @@ class prowl:
                 raise ValueError(f"The tool `{callback_name}` is missing or not loaded in your callbacks argument")
             final_text += result.completion or ""
             variable:prowl.Variable = prowl.push_var(variables, callback_name, {'value': result.completion, 'data': result.data})
-            if variable_event and stream_level.value == prowl.StreamLevel.VARIABLE.value:
+            if variable_event and stream_level.covers(prowl.StreamLevel.VARIABLE):
                 er = await variable_event(script_name, variable)
                 if er is not None and er == False: # allow stopping on the variable event if it returns False
                     stop = True
@@ -562,7 +573,8 @@ class prowl:
                     log.info(completion)
                 generated_list = prowl.extract_lists(completion)
                 v = {'value': completion, 'usage': r.get('usage') or {},
-                     'arg': (int_arg, float_arg), 'type': var_type, 'truncated': truncated}
+                     'arg': (int_arg, float_arg), 'type': var_type, 'truncated': truncated,
+                     'span': (len(prompt), len(prompt) + len(completion))}
                 if generated_list:
                     v['list'] = generated_list
                 if len(r['choices']) > 1: # n>1: keep the alternatives, don't bill for them and drop them
@@ -571,7 +583,7 @@ class prowl:
                 prompt += completion
                 # TODO add this variable_event to the tool callback so that tool variables also return
                 #print(variable_event, stream_level.value == prowl.StreamLevel.VARIABLE.value, prowl.StreamLevel.VARIABLE, stream_level)
-                if variable_event and stream_level.value == prowl.StreamLevel.VARIABLE.value:
+                if variable_event and stream_level.covers(prowl.StreamLevel.VARIABLE):
                     #print(variable.to_dict())
                     await variable_event(script_name, variable)
             else:
