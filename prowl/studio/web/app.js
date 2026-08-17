@@ -523,13 +523,4 @@ addEventListener('keydown', e => {
   }
 })
 
-// The real owl lives on the README as a GitHub attachment rather than in the repo, so the SVG is a
-// stand-in: drop a logo.png beside it and both the mark and the tab icon pick it up.
-fetch('/logo.png', {method: 'HEAD'}).then(r => {
-  if (!r.ok) return
-  $('#mark').src = '/logo.png'
-  $('#favicon').href = '/logo.png'
-  $('#favicon').type = 'image/png'
-}).catch(() => {})
-
 boot().catch(e => { $('#status').textContent = 'error: ' + e.message; $('#status').classList.add('bad') })
