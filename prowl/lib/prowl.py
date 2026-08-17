@@ -578,8 +578,9 @@ class prowl:
                 # It's a reference
                 if var_type is not None:
                     raise ValidationError(1009,
-                        f"`{var_name}:{var_type}` is a reference with a type: give it "
-                        f"(max_tokens, temperature) to declare it, or drop the type to reference it",
+                        f"`{{{var_name}:{var_type}}}` declares nothing -- the parentheses are what "
+                        f"declares. Write `{{{var_name}:{var_type}(max_tokens, temperature)}}` to "
+                        f"generate it here, or `{{{var_name}}}` to splice one declared earlier",
                         data={'variable': var_name, 'type': var_type, 'script': script_name})
                 if var_name in variables:
                     # Replace the reference with the stored value

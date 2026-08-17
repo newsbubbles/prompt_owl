@@ -138,8 +138,10 @@ class ProwlStack:
                 #print("\tREFERENCE", var_name)
                 if match.group(2) is not None:
                     errors.append(ValidationError(1009,
-                        f"`{var_name}:{match.group(2)}` is a reference with a type: give it "
-                        f"(max_tokens, temperature) to declare it, or drop the type",
+                        f"`{{{var_name}:{match.group(2)}}}` declares nothing -- the parentheses are "
+                        f"what declares. Write `{{{var_name}:{match.group(2)}(max_tokens, "
+                        f"temperature)}}` to generate it here, or `{{{var_name}}}` to splice one "
+                        f"declared earlier",
                         data={'variable': var_name, 'type': match.group(2), 'task': task_name}))
                 referenced[var_name] = match.start()
         required = list(set(referenced) - set(declared))
