@@ -108,6 +108,18 @@
 
 ### Fixed
 
+- **An empty `.prowl` file made `ProwlStack` unconstructible.** `prowl.load` returns `""` for an
+  empty file, `""` is falsy, and `add_task` chained `load(x.prowl) or load(x.md)` — so an empty
+  script fell through to a `.md` that was not there, got registered with `code: None`, and the
+  `inspect()` in `__init__` raised `TypeError` on it. Six scripts shipped in `prowl/prompts` are
+  0 bytes, which is why `ProwlStack(folder='prowl/prompts/pov/')` did not work at all. `None` now
+  means "could not read" and never "was empty", and a task with no code is refused rather than
+  stored.
+
+- **Scripts are read as UTF-8.** `open(path, "r")` used the locale encoding, which is cp1252 on
+  Windows — so a script containing an em dash raised, was swallowed by the bare `except`, and
+  came back as `None`. Found while loading the library into a studio workspace.
+
 - **`validate()` and `forecast()` disagreed with `fill()` about ```prowl blocks.** `fill` masks
   those blocks so their braces are inert, but `inspect_vars` and `forecast` scanned the raw source.
   A variable written inside a block therefore counted as *declared* without ever being declared —

@@ -62,17 +62,21 @@ class ProwlStack:
     
     def add_task(self, name, folder='', reinspect=False):
         # add a task to the available tasks pool
-        try:
-            loaded = prowl.load(f"{folder}{name}.prowl") or prowl.load(f"{folder}{name}.md")
-            self.tasks[name] = {
-                'folder': folder,
-                'code': loaded,
-                'inspect': (None, None),
-            }
-            if reinspect:
-                self.inspect()
-        except Exception as e:
-            log.warn(f'Maybe `{name}.prowl` or `{name}.md` prompt not found in folder `{folder}`: {e}')
+        code = prowl.load(f"{folder}{name}.prowl")
+        if code is None:
+            code = prowl.load(f"{folder}{name}.md")
+        if code is None:
+            # never register a task with no code: everything downstream assumes a string, so one
+            # unreadable file used to take the whole stack down at construction time
+            log.warn(f'Maybe `{name}.prowl` or `{name}.md` prompt not found in folder `{folder}`')
+            return
+        self.tasks[name] = {
+            'folder': folder,
+            'code': code,
+            'inspect': (None, None),
+        }
+        if reinspect:
+            self.inspect()
     
     def add_tool(self, tool:ProwlTool, reinspect=True):
         self.tools[tool.name] = tool

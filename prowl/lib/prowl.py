@@ -87,13 +87,19 @@ class prowl:
     
     @staticmethod
     def load(path):
+        # None means "could not read", never "was empty". An empty file returns "" and the two
+        # must stay distinguishable: `load(a) or load(b)` treats "" as failure and falls through
+        # to a file that is not there.
+        # utf-8 explicitly, or the locale decides -- cp1252 on Windows, which cannot read a script
+        # containing an em dash.
         try:
-            with open(path, "r") as f:
-                o = f.read()
-            return o
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
         except Exception as e:
-            pass
-        return None
+            log.warn(f"cannot read `{path}`: {e}")
+            return None
 
     class Variable:
         def __init__(self, name:str=None, arg:tuple=None, value:str=None, list:list=None, data:dict=None, usage:VLLM.Usage=None, type:str=None, truncated:bool=False, span:tuple=None):

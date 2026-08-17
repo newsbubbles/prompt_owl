@@ -2,12 +2,14 @@
 // variables "referenced before anything declares them" that an earlier script in the stack
 // declares perfectly well, so every check below runs against the whole ordered stack.
 
+import {useLang, analyse, render, conform} from './editor.js'
+
 const $ = s => document.querySelector(s)
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x !== undefined) n.textContent = x; return n }
 
 const S = {
-  lang: null, ws: null, browser: [], stack: [], open: null,
-  dirty: new Set(), inputs: {}, needs: [], run: null, result: null,
+  lang: null, ws: null, browser: [], stack: [], open: null, tools: [],
+  dirty: new Set(), inputs: {}, needs: [], run: null, result: null, marks: null,
 }
 
 async function api(path, body, method) {
@@ -50,6 +52,7 @@ async function stream(path, body, on) {
 async function boot() {
   const [h, lang, ws] = await Promise.all([api('/health'), api('/lang'), api('/workspaces')])
   S.lang = lang
+  useLang(lang)
   if (h.model) $('#model').value = h.model
   $('#status').textContent = h.has_key ? `budget ${h.budget.toLocaleString()} tok`
                                        : 'no PROWL_VENDOR_API_KEY — runs will fail'
@@ -64,6 +67,7 @@ async function boot() {
 async function loadBrowser() {
   const d = await api(`/w/${S.ws}/scripts`)
   S.browser = d.scripts
+  S.tools = d.tools || []
   const ul = $('#browser'); ul.replaceChildren()
   for (const s of d.scripts) {
     const li = el('li', 'row' + (S.stack.includes(s.name) ? ' in' : ''))
@@ -119,10 +123,99 @@ async function openScript(name) {
   S.open = name
   renderStack()
   const ed = $('#editor')
-  if (!name) { ed.value = ''; return }
+  if (!name) { ed.value = ''; ed.dataset.name = ''; paint(); return }
   const d = await api(`/w/${S.ws}/script/${name}`)
   ed.value = d.prowl || ''
   ed.dataset.name = name
+
+  // The client reimplements masking and the shape rule so the editor can respond to a keystroke
+  // without a round trip. This is the check that it still agrees with the interpreter that will
+  // actually run the file.
+  const drift = conform(ed.value, d.outline)
+  if (drift.length) console.warn('[prowl] editor disagrees with the interpreter:', drift)
+  paint()
+}
+
+// ---------------------------------------------------------------- painting
+
+// Everything a script needs to be read correctly is context from the rest of the stack: which
+// variables exist by the time this script runs, which come in as inputs, which tools are loaded.
+function context() {
+  const declared = new Set()
+  for (const name of S.stack) {
+    if (name === S.open) break
+    const s = S.browser.find(x => x.name === name)
+    if (s) for (const v of s.declares) declared.add(v)
+  }
+  return {declared, inputs: new Set([...S.needs, ...Object.keys(S.inputs)]), tools: new Set(S.tools)}
+}
+
+let paintQueued = false
+function paint() {
+  if (paintQueued) return
+  paintQueued = true
+  requestAnimationFrame(() => {
+    paintQueued = false
+    const src = $('#editor').value
+    if (!$('#editor').dataset.name) { $('#hl').innerHTML = ''; $('#lints').replaceChildren(); $('#caret').replaceChildren(); return }
+    const a = analyse(src, context())
+    S.marks = a
+    $('#hl').innerHTML = render(src, a.cls)
+    syncScroll()
+    renderLints(a)
+    renderCaret()
+  })
+}
+
+function syncScroll() {
+  const ta = $('#editor'), hl = $('#hl').parentElement
+  hl.scrollTop = ta.scrollTop
+  hl.scrollLeft = ta.scrollLeft
+}
+
+const LEVEL = {err: 'err', warn: 'warn', hint: 'hint'}
+
+function renderLints(a) {
+  const box = $('#lints'); box.replaceChildren()
+  const sorted = [...a.lints].sort((x, y) => (x.at || 0) - (y.at || 0))
+  for (const l of sorted) {
+    const lvl = LEVEL[l.level] || 'err'
+    const row = el('div', 'lint ' + lvl)
+    if (l.code) row.append(el('code', null, String(l.code)))
+    row.append(el('span', null, l.message))
+    row.onclick = () => {
+      const ta = $('#editor')
+      ta.focus(); ta.setSelectionRange(l.at, l.at)
+      ta.blur(); ta.focus()
+    }
+    box.append(row)
+  }
+}
+
+// Which declaration the caret is in, and what will actually happen to it.
+function renderCaret() {
+  const bar = $('#caret'); bar.replaceChildren()
+  if (!S.marks) return
+  const at = $('#editor').selectionStart
+  const d = S.marks.decls.find(x => at >= x.start && at <= x.end)
+  if (!d) {
+    const r = S.marks.refs.find(x => at >= x.start && at <= x.end)
+    if (r) {
+      bar.append(el('span', 'k', `{${r.name}}`))
+      bar.append(el('span', null, r.kind === 'p-ref' ? 'reference — splices a value declared earlier'
+        : r.kind === 'p-input' ? 'input — supplied by the caller'
+        : 'nothing declares or supplies this; the literal text stays in the prompt'))
+    } else {
+      bar.append(el('span', null, `${S.marks.decls.length} declarations · ${S.marks.refs.length} references`))
+    }
+    return
+  }
+  bar.append(el('span', 'k', d.name))
+  if (d.type) bar.append(el('span', 't', ':' + d.type))
+  bar.append(el('span', null, `${d.max} tokens`), el('span', null, `temp ${d.temp}`))
+  bar.append(el('span', d.shape === 'block' ? 's' : null,
+    d.shape === 'block' ? 'block — keeps newlines, gets the full budget' : 'inline — cut at the first newline'))
+  bar.append(el('span', null, 'stops ' + d.stops.map(s => `"${S.marks.show(s)}"`).join(' ')))
 }
 
 async function save() {
@@ -152,6 +245,7 @@ async function check() {
   f.append(el('span', v.ok ? 'ok' : 'bad', v.ok ? 'valid' : `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''}`))
   showErrors(v.errors)
   $('#run').disabled = !v.ok || v.over_budget
+  paint()   // what counts as bound, as an input, or as dangling depends on the stack order
 }
 
 function renderInputs() {
@@ -343,9 +437,21 @@ $('#script-new').onclick = async () => {
     await loadBrowser(); S.stack.push(name); openScript(name)
   } catch (e) { alert(e.message) }
 }
-$('#editor').oninput = () => { const n = $('#editor').dataset.name; if (n) { S.dirty.add(n); renderStack() } }
+$('#editor').oninput = () => { const n = $('#editor').dataset.name; if (n) { S.dirty.add(n); renderStack() } paint() }
+$('#editor').onscroll = syncScroll
 $('#editor').onblur = save
-$('#editor').onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save() } }
+$('#editor').onkeyup = renderCaret
+$('#editor').onclick = renderCaret
+$('#editor').onkeydown = e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save() }
+  if (e.key === 'Tab') {   // a textarea that eats Tab is a textarea nobody can indent in
+    e.preventDefault()
+    const ta = e.target, a = ta.selectionStart, b = ta.selectionEnd
+    ta.value = ta.value.slice(0, a) + '  ' + ta.value.slice(b)
+    ta.selectionStart = ta.selectionEnd = a + 2
+    S.dirty.add(ta.dataset.name); renderStack(); paint()
+  }
+}
 $('#atomic').onchange = renderStack
 $('#run').onclick = () => save().then(go)
 $('#stop').onclick = halt

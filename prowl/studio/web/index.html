@@ -25,8 +25,12 @@
     <div id="stack" class="stack">
       <div class="stack-empty">Click a script to add it to the stack.</div>
     </div>
-    <div id="tabbar" class="tabbar"></div>
-    <textarea id="editor" spellcheck="false" placeholder="Select a script from the stack."></textarea>
+    <div class="ed">
+      <pre class="hl" aria-hidden="true"><code id="hl"></code></pre>
+      <textarea id="editor" spellcheck="false" placeholder="Select a script from the stack."></textarea>
+    </div>
+    <div id="caret" class="caret-bar"></div>
+    <div id="lints" class="lints"></div>
     <div id="inputs" class="inputs"></div>
     <div id="forecast" class="forecast"></div>
   </section>
