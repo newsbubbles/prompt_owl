@@ -30,6 +30,11 @@ class VLLM:
             self.total_tokens: int = 0
             self.completion_tokens: int = 0
             self.elapsed: float = 0
+            # what the run actually cost, when the vendor reports it. `cost()` below estimates
+            # from multipliers and predates vendors sending the number themselves.
+            self.spend: float = 0.0
+            # true once anything here was counted rather than reported
+            self.estimated: bool = False
 
         def cost(self, prompt_multiplier, completion_multiplier):
             return (float(self.prompt_tokens) * prompt_multiplier) + (float(self.completion_tokens) * completion_multiplier)
@@ -39,6 +44,8 @@ class VLLM:
                 self.prompt_tokens += ref.get('prompt_tokens', 0)
                 self.completion_tokens += ref.get('completion_tokens', 0)
                 self.total_tokens += ref.get('total_tokens', 0)
+                self.spend += ref.get('cost') or 0.0
+                self.estimated = self.estimated or bool(ref.get('estimated'))
                 if 'elapsed' in ref:
                     self.elapsed += ref['elapsed']
             else:
@@ -46,14 +53,20 @@ class VLLM:
                 self.total_tokens += ref.total_tokens
                 self.completion_tokens += ref.completion_tokens
                 self.elapsed += ref.elapsed
+                self.spend += ref.spend
+                self.estimated = self.estimated or ref.estimated
 
         def dict(self):
-            return {
+            d = {
                 'prompt_tokens': self.prompt_tokens,
                 'total_tokens': self.total_tokens,
                 'completion_tokens': self.completion_tokens,
-                'elapsed': self.elapsed
+                'elapsed': self.elapsed,
+                'cost': self.spend,
             }
+            if self.estimated:
+                d['estimated'] = True
+            return d
 
     def get_usage(self):
         return self.usage
@@ -116,7 +129,7 @@ class VLLM:
                             data={'body': content, 'retry_after': response.headers.get('Retry-After')})
 
                     if streaming and stream_callback:
-                        tokens, choices, finish_reason = 0, [{} for _ in range(n)], None
+                        chunks, choices, usage = 0, [{} for _ in range(n)], None
                         async for line in response.content:
                             try:
                                 decoded_line = line.decode('utf-8').strip()
@@ -130,21 +143,35 @@ class VLLM:
                                     except json.JSONDecodeError:
                                         log.warn(f"Skipping non-JSON line: {decoded_line}")
                                         continue
-                                    tokens += 1
+                                    chunks += 1
+                                    # real usage rides the final chunk, cost included. No request
+                                    # flag turns it on; the old code just never looked.
+                                    if r.get('usage'):
+                                        usage = r['usage']
                                     for i, v in enumerate(r.get('choices', [])):
                                         if len(choices[i]) == 0:
                                             choices[i] = {'index': i, 'text': '', 'logprobs': None, 'finish_reason': None}
-                                        choices[i]['text'] += v.get('text', '')
-                                        choices[i]['finish_reason'] = v.get('finish_reason')
-                                    await stream_callback(r['choices'][0]['text'], finish_reason=choices[0]['finish_reason'], variable_name=variable_name)
+                                        choices[i]['text'] += v.get('text') or ''
+                                        # last non-null wins. OpenRouter repeats the reason on the
+                                        # usage chunk, but a vendor sending null there would erase
+                                        # it, and a lost 'length' is a lost truncation.
+                                        if v.get('finish_reason'):
+                                            choices[i]['finish_reason'] = v['finish_reason']
+                                    if r.get('choices'): # the usage chunk may carry none
+                                        await stream_callback(r['choices'][0].get('text') or '', finish_reason=choices[0]['finish_reason'], variable_name=variable_name)
                             except Exception as inner_e:
                                 log.error(f"Error processing streaming data: {inner_e}")
                                 traceback.print_exc()
                                 continue
-                        el = time.time() - st
-                        u = VLLM.Usage()
-                        u.add({'prompt_tokens': 0, 'completion_tokens': tokens, 'total_tokens': tokens, 'elapsed': el})
-                        return {'choices': choices, 'usage': u.dict()}
+                        if usage is None:
+                            # counting chunks is not counting tokens -- 36 chunks for 40 tokens,
+                            # and no prompt side at all. Return it flagged rather than as a number
+                            # that reads like the real one.
+                            log.warn("No usage in the stream; counts estimated from chunks.")
+                            usage = {'prompt_tokens': 0, 'completion_tokens': chunks,
+                                     'total_tokens': chunks, 'estimated': True}
+                        usage['elapsed'] = time.time() - st
+                        return {'choices': choices, 'usage': usage}
                     else:
                         resp_text = await response.text()
                         if resp_text.startswith(':') and '{' in resp_text: # keepalives ahead of the body

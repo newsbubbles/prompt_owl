@@ -77,6 +77,28 @@
   made `{prowl_script(4096, 0.1)}` parse as inline, so the generated script was truncated at its
   first line. The mask is now the same length as what it replaces (braces neutralized in place),
   so offsets stay valid; `unmask_prowl_code_blocks` is gone.
+- **Streamed runs reported a fabricated token count.** The streaming path counted SSE *chunks* and
+  called them completion tokens, with `prompt_tokens` hard-coded to `0` — a run measured at 36
+  tokens that really spent 40, and no prompt side at all, which is the expensive side. The vendor
+  sends real usage on the final chunk and it was being dropped on the floor. It is now read, and
+  streamed and non-streamed runs of the same template agree exactly.
+
+  No request flag turns this on: `stream_options: {"include_usage": true}` and OpenRouter's own
+  `usage: {"include": true}` were both measured against a bare stream and all three return byte
+  identical usage. The data was always there.
+
+  When a vendor genuinely sends no usage, the chunk count is still returned but carries
+  `estimated: True`, so a counted number can never again be mistaken for a reported one.
+
+- **`Usage` carries `cost`.** The vendor prices the call and returns it; there is no reason to
+  re-derive it from a rate card. `Usage.cost(prompt_multiplier, completion_multiplier)` is
+  unchanged for callers estimating against their own rates.
+
+- **A null `finish_reason` on a late chunk could erase an earlier one.** The streaming loop
+  overwrote the reason on every chunk, so a vendor that reports `length` and then sends a trailing
+  usage chunk without it would lose the truncation. Last non-null wins. A usage chunk carrying no
+  `choices` at all no longer raises into the error log either.
+
 - **Auto-continuation ran without stop sequences.** `auto_continue` passed `stops=` where the API
   expects `stop=`, so continuations generated to `max_tokens` and were trimmed after the fact.
   Only visible when `continue_ratio > 0`, which is the `ProwlStack` default.
