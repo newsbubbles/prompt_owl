@@ -121,15 +121,20 @@ class ProwlStack:
         #print(pattern)
         for match in pattern.finditer(code):
             var_name = match.group(1)
-            if match.group(2) is not None or match.group(3) is not None:
+            if match.group(3) is not None: # the parentheses declare, the type only annotates
                 #print("\tDECLARE", var_name, match.group(2))
                 try: # bad types and options are a validation failure, not a generation failure
-                    prowl.parse_args(match.group(3) or '', var_name, match.group(2))
+                    prowl.parse_args(match.group(3), var_name, match.group(2))
                 except ValidationError as e:
                     errors.append(e)
                 declared[var_name] = match.start()
             else:
                 #print("\tREFERENCE", var_name)
+                if match.group(2) is not None:
+                    errors.append(ValidationError(1009,
+                        f"`{var_name}:{match.group(2)}` is a reference with a type: give it "
+                        f"(max_tokens, temperature) to declare it, or drop the type",
+                        data={'variable': var_name, 'type': match.group(2), 'task': task_name}))
                 referenced[var_name] = match.start()
         required = list(set(referenced) - set(declared))
         required = [(None, v) for v in required]
@@ -217,10 +222,10 @@ class ProwlStack:
             if task not in self.tasks:
                 continue
             for m in re.finditer(prowl.PATTERN_FILL, self.tasks[task]['code']):
-                if m.group(2) is None and m.group(3) is None:
+                if m.group(3) is None: # only declarations cost anything
                     continue
                 try:
-                    max_tokens, _, _ = prowl.parse_args(m.group(3) or '', m.group(1), m.group(2))
+                    max_tokens, _, _ = prowl.parse_args(m.group(3), m.group(1), m.group(2))
                 except ValidationError:
                     continue
                 decls, cap = decls + 1, cap + max_tokens

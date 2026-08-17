@@ -7,26 +7,28 @@
 - **Variable types.** A declaration may name the kind of value it expects:
 
   ```prowl
-  {answer:number}              the type carries its own budget
-  {mood:word(8, 0.3)}          an explicit budget still wins
+  {answer:number(24, 0.0)}
+  {sure:bool(6, 0.0)}
+  {mood:word(8, 0.3)}
   {story:text(1024, 0.8)}
   {steps:list(300, 0.2)}
-  {sure:bool}
-  {title:line(40, 0.6)}
   ```
 
-  The type decides the stop sequence, the default budget, how the completion is read, and
-  **what counts as a value at all**. `max_tokens` goes back to being a runaway guard instead of
-  doubling as a shape hint, so `{answer:number}` is a complete declaration.
+  The type decides the stop sequence, how the completion is read, and **what counts as a value at
+  all**, so `max_tokens` goes back to being a runaway guard instead of doubling as a shape hint.
 
-  | type | stops at | holds | budget |
-  |---|---|---|---|
-  | `word` | newline or space | the first word | 8 |
-  | `line` | newline | one line, invalid if it ends in `:` | 64 |
-  | `number` | newline | the last number in the text | 16 |
-  | `bool` | newline | `true`/`false`, invalid if neither | 8 |
-  | `text` | next markdown header | the prose | 512 |
-  | `list` | next markdown header | the text, invalid with no items | 300 |
+  **A type annotates a declaration; it never makes one.** The parentheses are what declares, as
+  they always have been — `{answer:number}` with no arguments raises `ValidationError` (1009),
+  because a reference only splices a value that already exists and has nothing to type.
+
+  | type | stops at | holds |
+  |---|---|---|
+  | `word` | newline or space | the first word |
+  | `line` | newline | one line, invalid if it ends in `:` |
+  | `number` | newline | the last number in the text |
+  | `bool` | newline | `true`/`false`, invalid if neither |
+  | `text` | next markdown header | the prose |
+  | `list` | next markdown header | the text, invalid with no items |
 
   `text` and `list` stop at `\n#` and **not** at a blank line. A blank line is inside prose, not
   the end of it; that default silently truncated a chain-of-thought after one sentence.

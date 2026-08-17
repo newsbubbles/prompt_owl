@@ -44,9 +44,12 @@ class prowl:
     FLAGS = ('block', 'inline')
 
     # A declared type says what kind of value the model is expected to produce. It decides the
-    # stop sequence, the default budget, how the raw completion is read, and what counts as a
-    # value at all -- so `max_tokens` goes back to being a runaway guard instead of doubling as
-    # a shape hint. `{answer:number}` is a complete declaration.
+    # stop sequence, how the raw completion is read, and what counts as a value at all -- so
+    # `max_tokens` goes back to being a runaway guard instead of doubling as a shape hint.
+    #
+    # A type annotates a declaration, it never makes one: the parentheses are what declares.
+    # `{answer:number(8, 0.0)}` declares, `{answer}` references, and a reference has nothing to
+    # type because it only splices a value that already exists.
     #
     # `bounded` types cannot contain a newline, so a newline is a true boundary and the server
     # can stop there. Running out of budget on one means it was cut off mid-value, which is the
@@ -57,12 +60,12 @@ class prowl:
     # stop at the next markdown header only, never at a blank line. A blank line inside prose is
     # not the end of the value; that default is what cut a chain-of-thought off after one sentence.
     TYPES = {
-        'word':   {'stops': ['\n', ' '], 'budget': 8,   'bounded': True},
-        'line':   {'stops': ['\n'],      'budget': 64,  'bounded': True},
-        'number': {'stops': ['\n'],      'budget': 16,  'bounded': True},
-        'bool':   {'stops': ['\n'],      'budget': 8,   'bounded': True},
-        'text':   {'stops': ['\n#'],     'budget': 512, 'bounded': False},
-        'list':   {'stops': ['\n#'],     'budget': 300, 'bounded': False},
+        'word':   {'stops': ['\n', ' '], 'bounded': True},
+        'line':   {'stops': ['\n'],      'bounded': True},
+        'number': {'stops': ['\n'],      'bounded': True},
+        'bool':   {'stops': ['\n'],      'bounded': True},
+        'text':   {'stops': ['\n#'],     'bounded': False},
+        'list':   {'stops': ['\n#'],     'bounded': False},
     }
     TRUE = ('yes', 'true', 'y', '1', 'correct', 'affirmative')
     FALSE = ('no', 'false', 'n', '0', 'incorrect', 'negative')
@@ -236,10 +239,8 @@ class prowl:
             opts[key] = value.strip().strip('"\'')
 
         if not pos:
-            if var_type is None:
-                raise ValidationError(1006, f"`{var_name}` declares no max_tokens",
-                    data={'variable': var_name, 'args': text})
-            return prowl.TYPES[var_type]['budget'], prowl.TEMPERATURE, opts
+            raise ValidationError(1006, f"`{var_name}` declares no max_tokens",
+                data={'variable': var_name, 'args': text})
         if len(pos) > 2:
             # almost always an unquoted multi-value option: stop=.,\n splits on the comma and
             # leaves `\n` stranded here. Dropping it silently is the bug this class of check exists
@@ -469,7 +470,10 @@ class prowl:
             prompt += text_segment
 
             var_type = match.group(2)
-            if var_type is not None or match.group(3) is not None:
+            # The parentheses are what declares. A type is an annotation on a declaration, never
+            # a declaration on its own: a reference only splices a stored value, so it has
+            # nothing to type.
+            if match.group(3) is not None:
                 # Okay, first do a back-check to see if there are tool calls present somewhere before this variable
                 if callbacks:
                     prompt, variables, stop = await prowl.run_callbacks(prompt, callbacks, variables, stream_level=stream_level, variable_event=variable_event, script_name=script_name)
@@ -560,6 +564,11 @@ class prowl:
                     await variable_event(script_name, variable)
             else:
                 # It's a reference
+                if var_type is not None:
+                    raise ValidationError(1009,
+                        f"`{var_name}:{var_type}` is a reference with a type: give it "
+                        f"(max_tokens, temperature) to declare it, or drop the type to reference it",
+                        data={'variable': var_name, 'type': var_type, 'script': script_name})
                 if var_name in variables:
                     # Replace the reference with the stored value
                     var:prowl.Variable = variables[var_name]
