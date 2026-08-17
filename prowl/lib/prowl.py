@@ -5,7 +5,7 @@
 # Augmented conditional prompt completion. Prompting *is* programming.
 # Special thanks to @hattendo for his insights and helping me keep it minimal.
 
-import re, os, asyncio
+import re, os, random, asyncio
 from enum import Enum
 from typing import Any
 from .vllm import VLLM
@@ -166,6 +166,18 @@ class prowl:
                 'usage': self.usage.dict(),
                 'output': self.output,
             }
+
+    @staticmethod
+    def backoff(tries, error=None):
+        # honour Retry-After when the server sends one, else exponential. Jitter matters:
+        # a stack fanned out over one provider retries in lockstep without it.
+        after = (error.data or {}).get('retry_after') if isinstance(getattr(error, 'data', None), dict) else None
+        if after:
+            try:
+                return min(float(after), 30.0)
+            except ValueError:
+                pass
+        return min(2 ** tries, 30) * (0.5 + random.random() / 2)
 
     @staticmethod
     def parse_args(text, var_name=None):
@@ -442,8 +454,9 @@ class prowl:
                         tries += 1
                         if tries >= max_retries:
                             raise
-                        log.warn(f"HTTP {e.status} on `{var_name}`, retry {tries}/{max_retries}")
-                        await asyncio.sleep(4)
+                        wait = prowl.backoff(tries, e)
+                        log.warn(f"HTTP {e.status} on `{var_name}`, retry {tries}/{max_retries} in {wait:.1f}s")
+                        await asyncio.sleep(wait)
                         continue
                     except Exception as e:
                         tries += 1

@@ -112,7 +112,8 @@ class VLLM:
                     if response.status >= 400:
                         content = await response.text()
                         log.error(f"HTTP {response.status} during run_async(): {content}")
-                        raise APIError(response.status, f"HTTP {response.status} during run_async()", data=content)
+                        raise APIError(response.status, f"HTTP {response.status} during run_async()",
+                            data={'body': content, 'retry_after': response.headers.get('Retry-After')})
 
                     if streaming and stream_callback:
                         tokens, choices, finish_reason = 0, [{} for _ in range(n)], None
