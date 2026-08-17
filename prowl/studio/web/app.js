@@ -8,7 +8,7 @@ const $ = s => document.querySelector(s)
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x !== undefined) n.textContent = x; return n }
 
 const S = {
-  lang: null, ws: null, browser: [], stack: [], open: null, tools: [],
+  lang: null, ws: null, browser: [], stack: [], open: null, tools: [], models: [],
   dirty: new Set(), inputs: {}, needs: [], run: null, result: null, marks: null,
 }
 
@@ -53,7 +53,9 @@ async function boot() {
   const [h, lang, ws] = await Promise.all([api('/health'), api('/lang'), api('/workspaces')])
   S.lang = lang
   useLang(lang)
-  if (h.model) $('#model').value = h.model
+  restoreModels()
+  if (!S.models.length && h.model) S.models = [h.model]
+  renderModels()
   $('#status').textContent = h.has_key ? `budget ${h.budget.toLocaleString()} tok`
                                        : 'no PROWL_VENDOR_API_KEY — runs will fail'
   $('#status').classList.toggle('bad', !h.has_key)
@@ -356,30 +358,77 @@ function restoreInputs() {
   try { S.inputs = JSON.parse(localStorage.getItem(inputKey()) || '{}') } catch (e) { S.inputs = {} }
 }
 
+// ---------------------------------------------------------------- the pool
+
+function persistModels() {
+  try { localStorage.setItem('prowl.studio.models', JSON.stringify(S.models)) } catch (e) {}
+}
+function restoreModels() {
+  try { S.models = JSON.parse(localStorage.getItem('prowl.studio.models') || '[]') } catch (e) { S.models = [] }
+}
+
+function renderModels() {
+  const box = $('#models'); box.replaceChildren()
+  for (const m of S.models) {
+    const chip = el('span', 'mchip')
+    chip.append(el('span', null, short(m)))
+    chip.title = m
+    const x = el('button', 'x', '×')
+    x.type = 'button'; x.title = `remove ${m}`
+    x.onclick = () => { S.models = S.models.filter(n => n !== m); persistModels(); renderModels(); refresh() }
+    chip.append(x)
+    box.append(chip)
+  }
+  const run = $('#run')
+  run.textContent = S.models.length > 1 ? `▶ Run ×${S.models.length}` : '▶ Run'
+}
+
+function addModel(id) {
+  id = (id || '').trim()
+  if (!id || S.models.includes(id)) return
+  S.models.push(id); persistModels(); renderModels(); refresh()
+}
+
+// One model id is served by several backends at different quantization, and they do not answer the
+// same way: llama-3.3-70b returns HELIOTROPE on DeepInfra and a row of underscores on Novita.
+// Unpinned, a model comparison is partly a routing comparison.
+function pinned() {
+  const p = ($('#provider').value || '').trim()
+  return p ? {provider: {order: [p], allow_fallbacks: false}} : null
+}
+
 // ---------------------------------------------------------------- the run
 
 function newId() { return 'r' + Math.random().toString(36).slice(2, 10) }
 
 async function go() {
   const id = newId()
-  S.run = {id, order: [...S.stack], at: 0, live: [], usage: null}
+  const models = S.models.length ? S.models : [null]
+  const multi = models.length > 1
+  S.run = {id, models: Object.fromEntries(models.map(m => [key(m), {vars: {}, done: null}])), order: []}
   S.result = null
   $('#run').hidden = true; $('#stop').hidden = false
-  showPane('document')
+
+  // One model streams into the document; several stream into the grid, because four documents
+  // side by side is four walls of text and the question is always "which variable differs".
+  showPane(multi ? 'compare' : 'document')
   const doc = $('#pane-document'); doc.replaceChildren()
   const live = el('pre', 'doc live'); doc.append(live)
   let span = null, current = null
+  if (multi) renderCompare()
 
   const body = {
     run_id: id, scripts: S.stack, inputs: S.inputs, atomic: $('#atomic').checked,
-    model: $('#model').value.trim() || null,
+    models: S.models, extra: pinned(),
   }
 
   try {
     await stream(`/w/${S.ws}/run`, body, (ev, d) => {
+      const slot = S.run.models[key(d.model)]
       if (ev === 'start') {
         live.append(el('span', 'sys', `▶ ${d.scripts.join(' → ')}  ·  ${d.declarations} declarations\n`))
       } else if (ev === 'token') {
+        if (multi) return
         if (d.variable !== current) {
           current = d.variable
           live.append(el('span', 'sys', `\n· ${d.variable}\n`))
@@ -388,25 +437,94 @@ async function go() {
         span.append(document.createTextNode(d.text || ''))
         live.scrollTop = live.scrollHeight
       } else if (ev === 'var') {
-        S.run.live.push(d)
+        if (slot) slot.vars[d.name] = d
+        if (!S.run.order.includes(d.name)) S.run.order.push(d.name)
+        if (multi) renderCompare()
       } else if (ev === 'script_end') {
-        S.run.at++
-        live.append(el('span', 'sys', `\n■ ${d.task}\n`))
-        current = null
+        if (!multi) { live.append(el('span', 'sys', `\n■ ${d.task}\n`)); current = null }
       } else if (ev === 'error') {
         showErrors(d.errors || [], d.failed_variable)
         showPane('errors')
       } else if (ev === 'done') {
-        S.result = d
-        settle(d)
+        if (slot) slot.done = d
+        if (multi) renderCompare()
+        else { S.result = d; d.ok ? settle(d) : (showErrors(d.errors || [], d.failed_variable), showPane('errors')) }
+      } else if (ev === 'finished' && multi) {
+        renderCompare()
       }
     })
   } catch (e) {
     showErrors([{message: String(e.message || e)}])
     showPane('errors')
   } finally {
-    $('#run').hidden = false; $('#stop').hidden = true; S.run = null
+    $('#run').hidden = false; $('#stop').hidden = true
   }
+}
+
+const key = m => m || '(default)'
+const short = m => (m || '(default)').split('/').pop()
+
+// Variable x model. The comparison people actually want is per field: a prompt does not rot
+// uniformly on a newer model, one named variable stops behaving.
+function renderCompare() {
+  const p = $('#pane-compare'); p.replaceChildren()
+  if (!S.run) { p.append(el('div', 'hint', 'Add two or more models to compare them variable by variable.')); return }
+  const models = Object.keys(S.run.models)
+  const t = el('table', 'grid')
+  const hdr = el('tr')
+  hdr.append(el('th', null, ''))
+  for (const m of models) {
+    const th = el('th')
+    th.append(el('div', 'm', short(m)))
+    const slot = S.run.models[m]
+    if (slot.done) {
+      const u = slot.done.usage
+      th.append(el('div', 'sub', slot.done.ok
+        ? `$${(u ? u.cost : 0).toFixed(6)} · ${(u ? u.elapsed : 0).toFixed(1)}s`
+        : `failed${slot.done.failed_variable ? ' on ' + slot.done.failed_variable : ''}`))
+    } else {
+      th.append(el('div', 'sub run', 'running…'))
+    }
+    hdr.append(th)
+  }
+  t.append(hdr)
+
+  for (const name of S.run.order) {
+    const tr = el('tr')
+    tr.append(el('td', 'name', name))
+    for (const m of models) {
+      const slot = S.run.models[m]
+      const v = slot.vars[name]
+      const td = el('td', 'cell')
+      if (!v) {
+        const failed = slot.done && slot.done.failed_variable === name
+        td.append(el('span', failed ? 'bad' : 'muted', failed ? 'raised here' : '—'))
+      } else {
+        td.append(el('span', 'val', (v.value || '').slice(0, 220)))
+        const f = el('div', 'flags')
+        if (v.type) f.append(el('span', 'tag', v.type))
+        if (v.truncated) f.append(el('span', 'tag bad', 'truncated'))
+        if (v.usage) f.append(el('span', 'tag', `${v.usage.completion_tokens} tok`))
+        td.append(f)
+      }
+      tr.append(td)
+    }
+    t.append(tr)
+  }
+  p.append(t)
+
+  // Where they disagree, which is the only reason to look at this table. Compare only the
+  // models that produced a value: counting a missing cell as "different" made every row
+  // differ, which is a table that says nothing.
+  const differing = S.run.order.filter(n => {
+    const vals = models.map(m => (S.run.models[m].vars[n] || {}).value)
+                       .filter(v => v !== undefined && v !== null)
+    return new Set(vals).size > 1
+  })
+  if (models.length > 1)
+    p.append(el('div', 'hint', differing.length
+      ? `${differing.length} of ${S.run.order.length} variables differ: ${differing.join(', ')}`
+      : `all ${S.run.order.length} variables identical across ${models.length} models`))
 }
 
 async function halt() {
@@ -552,6 +670,11 @@ $('#editor').onkeydown = e => {
     S.dirty.add(ta.dataset.name); renderStack(); paint()
   }
 }
+$('#model').onkeydown = e => {
+  if (e.key === 'Enter') { e.preventDefault(); addModel(e.target.value); e.target.value = '' }
+}
+$('#provider').value = localStorage.getItem('prowl.studio.provider') || ''
+$('#provider').oninput = e => localStorage.setItem('prowl.studio.provider', e.target.value.trim())
 $('#atomic').onchange = renderStack
 $('#run').onclick = () => save().then(go)
 $('#stop').onclick = halt

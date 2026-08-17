@@ -57,7 +57,7 @@ class RunBody(BaseModel):
     run_id: str
     scripts: List[str]
     inputs: Dict[str, str] = {}
-    model: Optional[str] = None
+    models: List[str] = []                   # empty means whatever PROWL_MODEL is set to
     atomic: bool = False
     continue_ratio: float = 0.5
     extra: Optional[Dict[str, Any]] = None   # provider pinning, seed, response_format
@@ -169,54 +169,76 @@ async def run(ws: str, body: RunBody):
     state = {'stop': False}
     RUNS[body.run_id] = state
 
+    models = body.models or [None]           # None means whatever PROWL_MODEL is set to
+    inputs = {k: v for k, v in body.inputs.items() if v.strip()}   # as in validate: blank is unset
+
     async def stop_event():
         return state['stop']
 
-    async def token_event(text, finish_reason=None, variable_name=None):
-        await q.put(('token', {'text': text, 'variable': variable_name,
-                               'finish_reason': finish_reason}))
+    # One rig per model. ProwlStack holds run state on the instance, so models running
+    # concurrently need their own -- that is the multithreading warning in stack.py reached by a
+    # different road. Every event carries its model so the client can column them.
+    def rig(model):
+        s = core.build(workspace.folders(ws), include_library=False)
 
-    async def variable_event(script_name, variable):
-        # atomic=True is what carries `arg`, so the budget and temperature a value was declared
-        # with travel with the value. Without it the results panel can only show what came back,
-        # never what was asked for.
-        await q.put(('var', {'script': script_name, **variable.to_dict(history=True, atomic=True)}))
+        async def token_event(text, finish_reason=None, variable_name=None):
+            await q.put(('token', {'model': model, 'text': text, 'variable': variable_name,
+                                   'finish_reason': finish_reason}))
 
-    async def script_event(task, fill, output=None):
-        await q.put(('script_end', {'task': task, 'output': output,
-                                    'usage': fill.usage.dict()}))
+        async def variable_event(script_name, variable):
+            # atomic=True is what carries `arg`, so the budget and temperature a value was declared
+            # with travel with the value. Without it the results panel can only show what came back,
+            # never what was asked for.
+            await q.put(('var', {'model': model, 'script': script_name,
+                                 **variable.to_dict(history=True, atomic=True)}))
 
-    s = core.build(workspace.folders(ws), include_library=False)
-    s.stop_event, s.token_event = stop_event, token_event
-    s.variable_event, s.script_event = variable_event, script_event
+        async def script_event(task, fill, output=None):
+            await q.put(('script_end', {'model': model, 'task': task, 'output': output,
+                                        'usage': fill.usage.dict()}))
 
-    inputs = {k: v for k, v in body.inputs.items() if v.strip()}   # as in validate: blank is unset
+        s.stop_event, s.token_event = stop_event, token_event
+        s.variable_event, s.script_event = variable_event, script_event
+        return s
 
-    async def drive():
+    async def drive_one(model):
         try:
-            errors, decls, cap = core.check(s, body.scripts, inputs)
-            if errors:
-                await q.put(('error', {'errors': errors}))
-                return
-            if cap > core.budget():
-                await q.put(('error', {'errors': [{'message':
-                    f"worst case {cap} completion tokens over {decls} declarations exceeds "
-                    f"budget {core.budget()}"}]}))
-                return
-            await q.put(('start', {'scripts': body.scripts, 'declarations': decls,
-                                   'max_completion_tokens': cap, 'model': body.model}))
-            r = await s.run(body.scripts, inputs=inputs, atomic=body.atomic,
-                            model=body.model, extra=body.extra,
-                            continue_ratio=body.continue_ratio,
-                            stream_level=prowl.StreamLevel.TOKEN)
+            r = await rig(model).run(body.scripts, inputs=inputs, atomic=body.atomic,
+                                     model=model, extra=body.extra,
+                                     continue_ratio=body.continue_ratio,
+                                     stream_level=prowl.StreamLevel.TOKEN)
             done = r.to_dict()
             done['variables'] = {k: v.to_dict(history=True, atomic=True)
                                  for k, v in r.variables.items()}
-            await q.put(('done', {'ok': True, 'stopped': state['stop'], **done}))
+            await q.put(('done', {'model': model, 'ok': True, 'stopped': state['stop'], **done}))
         except GenerationError as e:
-            await q.put(('error', {'failed_variable': e.variable, 'errors': [e.to_dict()]}))
+            # the whole point of comparing models: WHICH variable stopped filling on this one
+            await q.put(('done', {'model': model, 'ok': False, 'failed_variable': e.variable,
+                                  'errors': [e.to_dict()]}))
         except APIError as e:
-            await q.put(('error', {'fatal': e.fatal(), 'errors': [e.to_dict()]}))
+            await q.put(('done', {'model': model, 'ok': False, 'fatal': e.fatal(),
+                                  'errors': [e.to_dict()]}))
+        except Exception as e:
+            await q.put(('done', {'model': model, 'ok': False,
+                                  'errors': [{'message': f"{type(e).__name__}: {e}"}]}))
+
+    async def drive():
+        try:
+            probe = core.build(workspace.folders(ws), include_library=False)
+            errors, decls, cap = core.check(probe, body.scripts, inputs)
+            if errors:
+                await q.put(('error', {'errors': errors}))
+                return
+            total = cap * len(models)
+            if total > core.budget():
+                await q.put(('error', {'errors': [{'message':
+                    f"worst case {cap} completion tokens x {len(models)} model(s) = {total} "
+                    f"exceeds budget {core.budget()}"}]}))
+                return
+            await q.put(('start', {'scripts': body.scripts, 'declarations': decls,
+                                   'max_completion_tokens': cap, 'models': models}))
+            # concurrently: a pool of six run in the time of the slowest, not the sum
+            await asyncio.gather(*(drive_one(m) for m in models))
+            await q.put(('finished', {'models': models}))
         except Exception as e:
             await q.put(('error', {'errors': [{'message': f"{type(e).__name__}: {e}"}]}))
         finally:

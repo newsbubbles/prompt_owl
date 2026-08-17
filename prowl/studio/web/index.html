@@ -10,7 +10,9 @@
   <h1>prowl <span>studio</span></h1>
   <select id="ws-pick" title="workspace"></select>
   <button id="ws-new" class="ghost" title="new workspace">+</button>
-  <input id="model" placeholder="model" spellcheck="false">
+  <input id="model" placeholder="model id — Enter to add" spellcheck="false">
+  <input id="provider" placeholder="pin provider" spellcheck="false" title="Pin one backend, e.g. DeepInfra. One model id is served by several backends at different quantization, and they do not answer the same way — leave this empty and a comparison measures routing.">
+  <div id="models" class="models"></div>
   <label class="check"><input type="checkbox" id="atomic"> atomic</label>
   <button id="run" class="go">▶ Run</button>
   <button id="stop" class="go stop" hidden>■ Stop</button>
@@ -40,11 +42,13 @@
   <section class="results">
     <div class="tabbar sub">
       <button data-pane="document" class="on">Document</button>
+      <button data-pane="compare">Compare</button>
       <button data-pane="variables">Variables</button>
       <button data-pane="errors">Errors</button>
       <button data-pane="raw">Raw</button>
     </div>
     <div id="pane-document" class="pane"><div class="hint">Run the stack to see the document it builds.</div></div>
+    <div id="pane-compare" class="pane" hidden><div class="hint">Add two or more models to compare them variable by variable.</div></div>
     <div id="pane-variables" class="pane" hidden></div>
     <div id="pane-errors" class="pane" hidden></div>
     <div id="pane-raw" class="pane" hidden></div>
