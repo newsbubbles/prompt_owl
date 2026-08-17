@@ -34,27 +34,9 @@ def build():
     return s
 
 
-def forecast(s, tasks):
-    # worst case: every declaration generating to its cap. Free to compute, and it is the
-    # only honest number available before spending anything.
-    decls, cap = 0, 0
-    for task in tasks:
-        if task not in s.tasks:
-            continue
-        for m in re.finditer(prowl.PATTERN_FILL, s.tasks[task]['code']):
-            if m.group(2) is None:
-                continue
-            try:
-                max_tokens, _, _ = prowl.parse_args(m.group(2), m.group(1))
-            except ValidationError:
-                continue
-            decls, cap = decls + 1, cap + max_tokens
-    return decls, cap
-
-
 def check(s, scripts, inputs):
     errors = s.validate(scripts, s.process_inputs(inputs or {}), report=True)
-    decls, cap = forecast(s, scripts)
+    decls, cap = s.forecast(scripts)
     return errors, decls, cap
 
 

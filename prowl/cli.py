@@ -124,7 +124,9 @@ def main():
               'error': {'message': errors[0]['message']}}, as_json)
         return E_VALIDATE
     if 'validate' in flags:
-        emit({'ok': True, 'scripts': flat, 'errors': []}, as_json)
+        decls, cap = stack.forecast(flat)
+        emit({'ok': True, 'scripts': flat, 'errors': [],
+              'declarations': decls, 'max_completion_tokens': cap}, as_json)
         return OK
 
     async def once(blocks, variables=None, prefix=""):

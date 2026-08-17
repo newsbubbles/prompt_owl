@@ -121,10 +121,10 @@ class ProwlStack:
         #print(pattern)
         for match in pattern.finditer(code):
             var_name = match.group(1)
-            if match.group(2) is not None:
+            if match.group(2) is not None or match.group(3) is not None:
                 #print("\tDECLARE", var_name, match.group(2))
-                try: # bad options are a validation failure, not a generation failure
-                    prowl.parse_args(match.group(2), var_name)
+                try: # bad types and options are a validation failure, not a generation failure
+                    prowl.parse_args(match.group(3) or '', var_name, match.group(2))
                 except ValidationError as e:
                     errors.append(e)
                 declared[var_name] = match.start()
@@ -208,6 +208,24 @@ class ProwlStack:
                     ids=[k]
                 )
             
+    def forecast(self, tasks, continue_ratio=0.5):
+        # worst case before spending anything: every declaration generating to its cap, and
+        # auto_continue firing on each one that does. Free to compute, and the only honest
+        # number available up front.
+        decls, cap = 0, 0
+        for task in tasks:
+            if task not in self.tasks:
+                continue
+            for m in re.finditer(prowl.PATTERN_FILL, self.tasks[task]['code']):
+                if m.group(2) is None and m.group(3) is None:
+                    continue
+                try:
+                    max_tokens, _, _ = prowl.parse_args(m.group(3) or '', m.group(1), m.group(2))
+                except ValidationError:
+                    continue
+                decls, cap = decls + 1, cap + max_tokens
+        return decls, int(cap * (1.0 + max(continue_ratio, 0.0)))
+
     def get_inspect(self, task_name):
         if task_name in self.tasks:
             vars, tools = self.tasks[task_name]['inspect']

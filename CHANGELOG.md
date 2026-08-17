@@ -4,6 +4,45 @@
 
 ### Added
 
+- **Variable types.** A declaration may name the kind of value it expects:
+
+  ```prowl
+  {answer:number}              the type carries its own budget
+  {mood:word(8, 0.3)}          an explicit budget still wins
+  {story:text(1024, 0.8)}
+  {steps:list(300, 0.2)}
+  {sure:bool}
+  {title:line(40, 0.6)}
+  ```
+
+  The type decides the stop sequence, the default budget, how the completion is read, and
+  **what counts as a value at all**. `max_tokens` goes back to being a runaway guard instead of
+  doubling as a shape hint, so `{answer:number}` is a complete declaration.
+
+  | type | stops at | holds | budget |
+  |---|---|---|---|
+  | `word` | newline or space | the first word | 8 |
+  | `line` | newline | one line, invalid if it ends in `:` | 64 |
+  | `number` | newline | the last number in the text | 16 |
+  | `bool` | newline | `true`/`false`, invalid if neither | 8 |
+  | `text` | next markdown header | the prose | 512 |
+  | `list` | next markdown header | the text, invalid with no items | 300 |
+
+  `text` and `list` stop at `\n#` and **not** at a blank line. A blank line is inside prose, not
+  the end of it; that default silently truncated a chain-of-thought after one sentence.
+
+  Unknown types raise `ValidationError` (1008) at validate time, before anything is generated.
+
+- **Truncation is visible.** `finish_reason == 'length'` was discarded, so a value cut off
+  mid-word was indistinguishable from a finished one. Variables now carry `truncated`, it is
+  logged when it happens, and it is reported in the failure when a value could not be read.
+
+- **Retries key on validity, not emptiness.** The old loop retried `while completion == ""`, so
+  anything that survived cleanup was accepted whatever it contained: `{answer(2, 0.0)}` returned
+  `"Let's denote"` and `{answer(8, 0.0)}` returned `"The final answer is: $\boxed{"`, both scored
+  as answers. A typed declaration that yields no value retries and then raises `GenerationError`
+  naming the type, the truncation and the last value seen.
+
 - **Declaration options.** After `(max_tokens, temperature)` a declaration may carry named
   options: `stop`, `n`, `logprobs`, `model`, and the bare flags `block` / `inline`.
 

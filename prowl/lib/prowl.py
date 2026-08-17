@@ -19,7 +19,7 @@ class prowl:
     # The argument list is captured whole and parsed by parse_args, but it must still
     # START with an integer to count as a declaration. That is what keeps prose like
     # "use the syntax {variable_name(max_tokens, temperature)}" from becoming one.
-    PATTERN_FILL = r'\{([a-zA-Z_0-9]+)(?:\((\d+[^)]*)\))?\}'
+    PATTERN_FILL = r'\{([a-zA-Z_0-9]+)(?::([a-zA-Z_0-9]+))?(?:\((\d[^)]*)\))?\}'
     # Splits an argument list on commas that are not inside quotes
     PATTERN_ARGS = r'''(?:[^,"']|"[^"]*"|'[^']*')+'''
     # Regular expression for matching bullets or numbered list items
@@ -42,7 +42,31 @@ class prowl:
     # of `stop=` silently disabled stop sequences on every auto-continuation.
     OPTIONS = ('stop', 'n', 'logprobs', 'model', 'block', 'inline')
     FLAGS = ('block', 'inline')
-    
+
+    # A declared type says what kind of value the model is expected to produce. It decides the
+    # stop sequence, the default budget, how the raw completion is read, and what counts as a
+    # value at all -- so `max_tokens` goes back to being a runaway guard instead of doubling as
+    # a shape hint. `{answer:number}` is a complete declaration.
+    #
+    # `bounded` types cannot contain a newline, so a newline is a true boundary and the server
+    # can stop there. Running out of budget on one means it was cut off mid-value, which is the
+    # failure that silently produced wrong answers for years: {answer(2, 0.0)} returned
+    # "Let's denote" and {answer(8, 0.0)} returned "The final answer is: $\boxed{". Both raise now.
+    #
+    # Unbounded types have no safe delimiter -- any character can occur inside prose -- so they
+    # stop at the next markdown header only, never at a blank line. A blank line inside prose is
+    # not the end of the value; that default is what cut a chain-of-thought off after one sentence.
+    TYPES = {
+        'word':   {'stops': ['\n', ' '], 'budget': 8,   'bounded': True},
+        'line':   {'stops': ['\n'],      'budget': 64,  'bounded': True},
+        'number': {'stops': ['\n'],      'budget': 16,  'bounded': True},
+        'bool':   {'stops': ['\n'],      'budget': 8,   'bounded': True},
+        'text':   {'stops': ['\n#'],     'budget': 512, 'bounded': False},
+        'list':   {'stops': ['\n#'],     'budget': 300, 'bounded': False},
+    }
+    TRUE = ('yes', 'true', 'y', '1', 'correct', 'affirmative')
+    FALSE = ('no', 'false', 'n', '0', 'incorrect', 'negative')
+
     # Stream levels tell 
     class StreamLevel(Enum):
         TOKEN = 'token'
@@ -61,7 +85,9 @@ class prowl:
         return None
 
     class Variable:
-        def __init__(self, name:str=None, arg:tuple=None, value:str=None, list:list=None, data:dict=None, usage:VLLM.Usage=None):
+        def __init__(self, name:str=None, arg:tuple=None, value:str=None, list:list=None, data:dict=None, usage:VLLM.Usage=None, type:str=None, truncated:bool=False):
+            self.type = type
+            self.truncated = truncated # the model was still going when the budget ran out
             self.name = name
             max_tokens, temperature = (None, None) if not arg else arg
             self.max_tokens = max_tokens
@@ -80,6 +106,7 @@ class prowl:
             self.new = False
             self.history.append(self.to_dict())
             self.name, self.value, self.list, self.data = variable.name, variable.value, variable.list, variable.data
+            self.type, self.truncated = variable.type, variable.truncated
 
         def first(self):
             return self if self.new else prowl.Variable(**self.history[0])
@@ -101,6 +128,10 @@ class prowl:
                 d['list'] = self.list
             if self.data:
                 d['data'] = self.data
+            if self.type:
+                d['type'] = self.type
+            if self.truncated:
+                d['truncated'] = True
             if history:
                 d['history'] = self.hist()
             if self.usage:
@@ -180,8 +211,12 @@ class prowl:
         return min(2 ** tries, 30) * (0.5 + random.random() / 2)
 
     @staticmethod
-    def parse_args(text, var_name=None):
+    def parse_args(text, var_name=None, var_type=None):
         # (max_tokens, temperature) positionally, then key=value options. Values may be quoted.
+        # A declared type carries its own budget, so `{answer:number}` needs no arguments at all.
+        if var_type is not None and var_type not in prowl.TYPES:
+            raise ValidationError(1008, f"`{var_name}` has unknown type `{var_type}`",
+                data={'variable': var_name, 'type': var_type, 'known': list(prowl.TYPES)})
         pos, opts = [], {}
         for part in re.findall(prowl.PATTERN_ARGS, text):
             part = part.strip()
@@ -201,8 +236,10 @@ class prowl:
             opts[key] = value.strip().strip('"\'')
 
         if not pos:
-            raise ValidationError(1006, f"`{var_name}` declares no max_tokens",
-                data={'variable': var_name, 'args': text})
+            if var_type is None:
+                raise ValidationError(1006, f"`{var_name}` declares no max_tokens",
+                    data={'variable': var_name, 'args': text})
+            return prowl.TYPES[var_type]['budget'], prowl.TEMPERATURE, opts
         if len(pos) > 2:
             # almost always an unquoted multi-value option: stop=.,\n splits on the comma and
             # leaves `\n` stranded here. Dropping it silently is the bug this class of check exists
@@ -329,55 +366,60 @@ class prowl:
         return completion, usage
     
     @staticmethod
-    async def align_conditioning(
-            prompt:str, 
-            variable_attributes:tuple, 
-            result_choice:dict, 
-            usage:VLLM.Usage, 
-            llm:VLLM, 
-            multiline:bool, 
-            continue_ratio=0.0,
-            stops=None,
-            retry_on_endswith=":",
-            stream_level=StreamLevel.NONE,
-            token_event=None,
-        ):
-        """Check the resulting correct and complete value"""
-        # Insure that the LLM resulting generation
-        variable_name, int_arg, float_arg = variable_attributes
-        stops = stops or prowl.STOPS
-        finish_reason = result_choice['finish_reason']
-        completion:str = result_choice["text"].strip()
-        
-        async def ac(stop=None):
-            # Helper function for automatic continuation on max_token length stop
-            completion, use = await prowl.auto_continue(llm, prompt, result_choice["text"].strip(), variable_attributes, finish_reason, continue_ratio, stops=stop or stops, multiline=multiline, stream_level=stream_level, token_event=token_event)
+    def read(var_type, text):
+        """Read a raw completion as the declared type: (value, ok).
+
+        ok=False means nothing usable for this type came back, which is a retry rather than a
+        value. The old test was `completion == ""`, so anything surviving cleanup was accepted
+        no matter what it held."""
+        text = text or ""
+        if var_type == 'number':
+            # the LAST number: models answer "The final answer is: $\boxed{58}$"
+            found = re.findall(r'-?\d+(?:\.\d+)?', text)
+            return (found[-1] if found else ""), bool(found)
+        if var_type == 'bool':
+            head = text.strip().lower().split()
+            word = re.sub(r'[^a-z0-9]', '', head[0]) if head else ""
+            if word in prowl.TRUE:
+                return 'true', True
+            if word in prowl.FALSE:
+                return 'false', True
+            return text.strip(), False
+        if var_type == 'word':
+            words = text.strip(prowl.PATTERN_STRIP).split()
+            return (words[0] if words else ""), bool(words)
+        if var_type == 'list':
+            value = text.strip()
+            return value, bool(prowl.extract_lists(value))
+        if var_type == 'text':
+            value = text.strip()
+            return value, bool(value)
+        # 'line', and untyped inline variables
+        value = text.strip(prowl.PATTERN_STRIP).split("\n")[0].strip(prowl.PATTERN_STRIP)
+        # a line ending in a colon is the model announcing a list it never wrote
+        return value, bool(value) and not value.endswith(":")
+
+    @staticmethod
+    async def resolve(llm, prompt, choice, var_type, var_attr, usage, stops, continue_ratio=0.0,
+                      multiline=False, stream_level=StreamLevel.NONE, token_event=None):
+        """Turn a raw completion into a value: (value, ok, truncated).
+
+        `truncated` is whether the model was still going when the budget ran out. It used to be
+        thrown away, which is why a value cut off mid-word was indistinguishable from a finished
+        one."""
+        truncated = choice.get('finish_reason') == 'length'
+        text = choice.get('text') or ""
+        bounded = prowl.TYPES.get(var_type, {}).get('bounded', not multiline)
+        # only continue what is allowed to run long. A bounded value that overran is a defect to
+        # report, not something to go and fetch more of.
+        if truncated and continue_ratio > 0.0 and not bounded:
+            text, use = await prowl.auto_continue(llm, prompt, text.strip(), var_attr, 'length',
+                continue_ratio, stops=stops, multiline=True,
+                stream_level=stream_level, token_event=token_event)
             usage.add(use)
-            return completion
-        
-        if not multiline: # make sure to trash multiline hallucinations
-            completion = completion.strip(prowl.PATTERN_STRIP)
-            #if it has a return character then we should retry...
-            if "\n" in completion:
-                # print("HAS A RETURN!")
-                gvt = completion.split("\n", 2)
-                gvi:str = gvt[0].strip(prowl.PATTERN_STRIP)
-                if gvi.endswith(retry_on_endswith):
-                    completion = ""
-                completion = gvi
-            else:
-                if completion.endswith(retry_on_endswith):
-                    # print("ERROR", completion)
-                    completion = ""
-                else:
-                    completion = await ac(stop=["\n"])
-            completion = completion.strip(prowl.PATTERN_STRIP)
-            # print('FINAL', completion)
-        else: # If multiline, just check autocontinue
-            completion = prowl.strip_stops(completion, stops)
-            completion = await ac()
-            completion = prowl.strip_stops(completion, stops)
-        return completion
+        value, ok = prowl.read(var_type or ('text' if multiline else 'line'),
+                               prowl.strip_stops(text.strip(), stops))
+        return value, ok, truncated
 
     @staticmethod
     async def fill(template:str, stops:list[str]=None, variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None, extra:dict=None):
@@ -426,25 +468,29 @@ class prowl:
             
             prompt += text_segment
 
-            if match.group(2) is not None:
+            var_type = match.group(2)
+            if var_type is not None or match.group(3) is not None:
                 # Okay, first do a back-check to see if there are tool calls present somewhere before this variable
                 if callbacks:
                     prompt, variables, stop = await prowl.run_callbacks(prompt, callbacks, variables, stream_level=stream_level, variable_event=variable_event, script_name=script_name)
                 # It's a declaration, ask the LLM for a value
-                int_arg, float_arg, opts = prowl.parse_args(match.group(2), var_name)
+                int_arg, float_arg, opts = prowl.parse_args(match.group(3) or '', var_name, var_type)
                 # `block`/`inline` override what the surrounding whitespace implied
                 if opts.pop('block', False):
                     multiline = True
                 if opts.pop('inline', False):
                     multiline = False
-                var_stops = opts.pop('stop', None) or stops
-                # Loop the call until a valid generated value is present for that variable
+                # a declared type brings its own boundary; an explicit stop= still wins
+                var_stops = opts.pop('stop', None) or (
+                    prowl.TYPES[var_type]['stops'] if var_type else stops)
+                # Loop the call until a VALID value is present, not merely a non-empty one
                 if not silent:
-                    log.info(f"<< {var_name}({int_arg}, {float_arg}) >> multiline: {multiline}")
-                completion = ""
+                    label = f"{var_name}:{var_type}" if var_type else var_name
+                    log.info(f"<< {label}({int_arg}, {float_arg}) >> multiline: {multiline}")
+                completion, ok, truncated = "", False, False
                 max_retries, tries = 4, 0
                 fad = 1.0 - float_arg
-                while completion == "":
+                while True:
                     fex = fad * (tries / max_retries)
                     try:
                         r = await llm.run_async(
@@ -475,19 +521,32 @@ class prowl:
                         log.warn(f"{type(e).__name__} on `{var_name}`: {e}, retry {tries}/{max_retries}")
                         await asyncio.sleep(4)
                         continue
-                    # get the final completion and perform cleanup from 0th choice
-                    completion = await prowl.align_conditioning(prompt, (var_name, int_arg, float_arg), r['choices'][0], usage, llm, multiline, continue_ratio=continue_ratio, stops=var_stops, stream_level=stream_level, token_event=token_event)
+                    completion, ok, truncated = await prowl.resolve(
+                        llm, prompt, r['choices'][0], var_type, (var_name, int_arg, float_arg),
+                        usage, var_stops, continue_ratio=continue_ratio, multiline=multiline,
+                        stream_level=stream_level, token_event=token_event)
+                    # Validity is the test, not truncation. A truncated completion that still
+                    # yields a good value gives us what was asked for; the rest was going to be
+                    # discarded anyway. Truncation only explains a failure, it isn't one.
+                    if ok:
+                        break
                     tries += 1
                     if tries >= max_retries:
-                        left_context = None if len(prompt) < 30 else prompt[-30:].replace("\n", "\\n")
+                        why = (f"no {var_type or 'value'} in the completion, cut off at "
+                               f"max_tokens={int_arg}" if truncated
+                               else f"no {var_type or 'value'} in the completion")
                         if not silent:
-                            log.error(f"prompt was:\n{prompt}")
-                        raise GenerationError(var_name, f"empty after {max_retries} attempts",
-                            data={'context': left_context, 'script': script_name})
+                            log.error(f"`{var_name}`: {why}; last value {completion!r}")
+                        raise GenerationError(var_name, f"{why} after {max_retries} attempts",
+                            data={'type': var_type, 'truncated': truncated,
+                                  'value': completion, 'script': script_name})
+                if truncated and not silent:
+                    log.warn(f"`{var_name}` hit its {int_arg} token budget; the value is incomplete")
                 if not silent:
                     log.info(completion)
                 generated_list = prowl.extract_lists(completion)
-                v = {'value': completion, 'usage': r.get('usage') or {}, 'arg': (int_arg, float_arg)}
+                v = {'value': completion, 'usage': r.get('usage') or {},
+                     'arg': (int_arg, float_arg), 'type': var_type, 'truncated': truncated}
                 if generated_list:
                     v['list'] = generated_list
                 if len(r['choices']) > 1: # n>1: keep the alternatives, don't bill for them and drop them
