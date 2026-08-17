@@ -13,6 +13,18 @@ class APIError(ValueError):
         return {'status': self.status, 'message': self.message, 'data': self.data}
 
 
+class GenerationError(ValueError):
+    # subclasses ValueError so existing callers still catch it
+    def __init__(self, variable, message, data=None):
+        super().__init__(f"Cannot generate `{variable}`: {message}")
+        self.variable = variable
+        self.message = message
+        self.data = data
+
+    def to_dict(self):
+        return {'variable': self.variable, 'message': self.message, 'data': self.data}
+
+
 class ValidationError(ValueError):
     def __init__(self, code, message, data=None):
         super().__init__(f"Error ({code}): {message}\n\t{data}")

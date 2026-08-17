@@ -11,7 +11,7 @@ from typing import Any
 from .vllm import VLLM
 from .tool import ProwlTool
 from .log import log
-from .error import APIError, ValidationError
+from .error import APIError, ValidationError, GenerationError
 
 class prowl:
     
@@ -456,7 +456,8 @@ class prowl:
                         left_context = None if len(prompt) < 30 else prompt[-30:].replace("\n", "\\n")
                         if not silent:
                             log.error(f"prompt was:\n{prompt}")
-                        raise ValueError(f"Cannot Generate Value for `{var_name}`. Context: {left_context}")
+                        raise GenerationError(var_name, f"empty after {max_retries} attempts",
+                            data={'context': left_context, 'script': script_name})
                 if not silent:
                     log.info(completion)
                 generated_list = prowl.extract_lists(completion)

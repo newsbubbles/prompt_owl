@@ -11,10 +11,14 @@ setup(
         'requests>=2.31.0',
         'aiohttp>=3.9.1',
     ],
+    extras_require={
+        'mcp': ['mcp>=1.2.0'],
+    },
     python_requires='>=3.9',
     entry_points={
         'console_scripts': [
             'prowl=prowl.cli:main',
+            'prowl-mcp=prowl.mcp:main',
         ],
     },
     # Additional metadata
