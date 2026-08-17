@@ -318,7 +318,7 @@ class prowl:
             completion = final_value + r['choices'][0]['text']
             if not multiline:
                 completion = prowl.strip_stops(completion, stops)
-            usage.add(r['usage'])
+            usage.add(r.get('usage') or {})
         return completion, usage
     
     @staticmethod
@@ -373,10 +373,13 @@ class prowl:
         return completion
 
     @staticmethod
-    async def fill(template:str, stops:list[str]=None, variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None):
+    async def fill(template:str, stops:list[str]=None, variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None, extra:dict=None):
         if variables is None:
             variables = {}
         stops = stops or prowl.STOPS
+        # run-level request fields the backend understands and prowl does not need to:
+        # provider pinning, seed, response_format. Declaration options win over these.
+        extra = extra or {}
         # callbacks are dict with 'var_name' as key and function as value
         # TODO add kwarg stop_condition is a dict with {'var_name': match_regex}
         # -> once implemented it will stop and return current results
@@ -445,9 +448,9 @@ class prowl:
                             streaming = stream_level == prowl.StreamLevel.TOKEN,
                             stream_callback = token_event,
                             variable_name=var_name,
-                            **opts,
+                            **{**extra, **opts},
                         )
-                        usage.add(r['usage'])
+                        usage.add(r.get('usage') or {})
                     except APIError as e:
                         if e.fatal():
                             raise
@@ -477,7 +480,7 @@ class prowl:
                 if not silent:
                     log.info(completion)
                 generated_list = prowl.extract_lists(completion)
-                v = {'value': completion, 'usage': r['usage'], 'arg': (int_arg, float_arg)}
+                v = {'value': completion, 'usage': r.get('usage') or {}, 'arg': (int_arg, float_arg)}
                 if generated_list:
                     v['list'] = generated_list
                 if len(r['choices']) > 1: # n>1: keep the alternatives, don't bill for them and drop them
