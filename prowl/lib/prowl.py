@@ -28,9 +28,12 @@ class prowl:
     PATTERN_CALL = r"\{@(\w+)\((.*?)\)\}"
     # Matches markdown randomness on single-line values for stripping
     PATTERN_STRIP = ' .-_*>#`\n'
-    # One default for every entry point. A blank line, or a markdown header on a new line.
-    # Bare `##` is deliberately not here: it stops on `##` mid-line, inside code and prose.
-    STOPS = ["\n\n", "\n#"]
+    # One default for every entry point. A blank line, or a markdown header.
+    # Bare `##` is here on purpose even though it also fires mid-line: models routinely run a
+    # header onto the current line ("Since## Step 2"), which `\n#` cannot catch, and every
+    # script in the library is markdown. Variables generating code or prose that contains `##`
+    # override it per declaration with stop=.
+    STOPS = ["\n\n", "\n#", "##"]
     # Temperature when a declaration gives max_tokens only
     TEMPERATURE = 0.0
     # Declaration options after (max_tokens, temperature). `block`/`inline` override the

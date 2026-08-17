@@ -154,6 +154,9 @@ class VLLM:
                             log.error(f"Failed to decode JSON in run_async(): {jde}")
                             log.error(f"Response text: {resp_text}")
                             raise
+                        # a 200 without choices is an error body wearing a success costume
+                        if 'choices' not in r:
+                            raise APIError(response.status, "response carried no `choices`", data=r)
                         # Add elapsed time to usage data
                         if 'usage' in r:
                             r['usage']['elapsed'] = time.time() - st

@@ -57,10 +57,17 @@
 - **Diagnostics go to stderr; stdout carries results only.** All library `print()` calls route
   through `prowl.lib.log`. Set `log.sink = lambda level, message: None` to silence, or point it
   anywhere to capture. This makes `prowl ... -json | jq` work.
-- **One stop default everywhere: `prowl.STOPS = ["\n\n", "\n#"]`.** Previously `prowl.fill`,
-  `ProwlStack.run`, `ProwlStack.fill` and the CLI each had a different default. Bare `"##"` was
-  dropped from the set because it stops on `##` anywhere in a line, including inside code.
-  Callers that passed `stops` explicitly are unaffected.
+- **One stop default everywhere: `prowl.STOPS = ["\n\n", "\n#", "##"]`.** Previously `prowl.fill`,
+  `ProwlStack.run`, `ProwlStack.fill` and the CLI each had a different default. Callers that
+  passed `stops` explicitly are unaffected.
+
+  Bare `"##"` is kept even though it also fires mid-line. It was briefly dropped during
+  development for that reason, and a benchmark run across five models showed why it exists:
+  models routinely run a header onto the current line (`"Since## Step 2"`, `"2.##"`), which
+  `"\n#"` cannot catch because there is no newline. The artifact appeared in **40–54% of
+  responses** on the Llama family without it, and **0%** with it. Variables generating code or
+  prose containing `##` now override it per declaration with `stop=`, which is the escape hatch
+  that did not exist in 0.1.
 - `ProwlStack.print()` takes only positional args now (it formats through `log`).
 
 ### CLI
