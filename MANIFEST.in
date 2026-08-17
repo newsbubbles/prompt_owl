@@ -4,6 +4,7 @@ include LICENSE
 # Include all files under the examples and docs directories
 recursive-include tools *
 recursive-include prompts *
+recursive-include prowl/studio/web *
 
 # Exclude all bytecode
 global-exclude *.pyc

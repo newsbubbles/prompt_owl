@@ -3,41 +3,25 @@
 # reimplements the interpreter.
 #   prowl-mcp [folder ...]      folders also read from PROWL_FOLDER, os.pathsep separated
 
-import os, re, sys
+import os, sys
 
 from mcp.server.fastmcp import FastMCP
 
-from .lib.prowl import prowl
-from .lib.stack import ProwlStack
 from .lib.log import log
-from .lib.error import APIError, ValidationError, GenerationError
-from .tools.out.tool import OutputTemplateTool
-from .tools.file.tool import FileTool
-from .tools.time.tool import TimeTool
-from .tools.include.tool import IncludeTool
-from .tools.list.tool import ListTool
-from .tools.script.tool import ScriptTool
-from .tools.comfy.tool import ComfyTool
-from .tools.each.tool import EachTool
+from .lib.error import APIError, GenerationError
+from .studio import core
 
 server = FastMCP("prowl")
 
 FOLDERS = []
-# Refuse rather than truncate. A runaway {story(4096)} across a model pool is real money.
-BUDGET = int(os.getenv('PROWL_MAX_COMPLETION_TOKENS', '20000'))
 
 
 def build():
-    s = ProwlStack(folder=list(FOLDERS), silent=True)
-    s.add_tools(OutputTemplateTool(s), FileTool(), IncludeTool(s), ScriptTool(s),
-                ComfyTool(), TimeTool(), ListTool(s), EachTool(s))
-    return s
+    return core.build(FOLDERS)
 
 
 def check(s, scripts, inputs):
-    errors = s.validate(scripts, s.process_inputs(inputs or {}), report=True)
-    decls, cap = s.forecast(scripts)
-    return errors, decls, cap
+    return core.check(s, scripts, inputs)
 
 
 @server.tool()
@@ -45,21 +29,7 @@ def list_scripts() -> list:
     """Every .prowl script on the configured folders. For each: the variables it declares, the
     variables it only references (which must be supplied as inputs or declared by an earlier
     script in the stack), the tools it calls, and whether it has a .prout output template."""
-    s = build()
-    out = []
-    for name in sorted(s.tasks):
-        vars, tools = s.get_inspect(name)
-        folder = s.tasks[name]['folder']
-        out.append({
-            'name': name,
-            'folder': folder,
-            'declares': vars['declared'],
-            'requires': sorted(set(vars['referenced']) - set(vars['declared'])),
-            'tools': tools['tools']['required'],
-            'has_prout': os.path.exists(folder + name + '.prout'),
-            'errors': [e.to_dict() for e in vars.get('errors', [])],
-        })
-    return out
+    return core.describe(build())
 
 
 @server.tool()
@@ -83,7 +53,7 @@ def validate(scripts: list, inputs: dict = None) -> dict:
     would spend, so the cost is known before it is paid."""
     errors, decls, cap = check(build(), scripts, inputs)
     return {'ok': not errors, 'errors': errors or [],
-            'declarations': decls, 'max_completion_tokens': cap, 'budget': BUDGET}
+            'declarations': decls, 'max_completion_tokens': cap, 'budget': core.budget()}
 
 
 @server.tool()
@@ -96,9 +66,9 @@ async def run(scripts: list, inputs: dict = None, model: str = None,
     errors, decls, cap = check(s, scripts, inputs)
     if errors:
         return {'ok': False, 'errors': errors}
-    if cap > BUDGET:
+    if cap > core.budget():
         return {'ok': False, 'errors': [{'message':
-            f"worst case {cap} completion tokens over {decls} declarations exceeds budget {BUDGET}"}]}
+            f"worst case {cap} completion tokens over {decls} declarations exceeds budget {core.budget()}"}]}
     try:
         r = await s.run(scripts, inputs=inputs or {}, stops=stops, atomic=atomic, model=model)
     except GenerationError as e:
@@ -120,10 +90,10 @@ async def run_pool(scripts: list, models: list, inputs: dict = None, atomic: boo
     errors, decls, cap = check(s, scripts, inputs)
     if errors:
         return {'ok': False, 'errors': errors}
-    if cap * len(models) > BUDGET:
+    if cap * len(models) > core.budget():
         return {'ok': False, 'errors': [{'message':
             f"worst case {cap} x {len(models)} models = {cap * len(models)} completion tokens "
-            f"exceeds budget {BUDGET}; raise PROWL_MAX_COMPLETION_TOKENS or cut the pool"}]}
+            f"exceeds budget {core.budget()}; raise PROWL_MAX_COMPLETION_TOKENS or cut the pool"}]}
 
     results = []
     for model in models:
@@ -152,7 +122,7 @@ async def run_pool(scripts: list, models: list, inputs: dict = None, atomic: boo
 def main():
     FOLDERS.extend(sys.argv[1:] or
                    [f for f in os.getenv('PROWL_FOLDER', 'prompts/').split(os.pathsep) if f])
-    log.info(f"prowl-mcp folders {FOLDERS} budget {BUDGET}")
+    log.info(f"prowl-mcp folders {FOLDERS} budget {core.budget()}")
     server.run()
 
 

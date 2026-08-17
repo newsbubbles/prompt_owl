@@ -26,6 +26,8 @@ class prowl:
     PATTERN_LIST = r'^\s*(?:\*|\+|\-|\d+\.)\s+(.*)$'
     # Matches tool calls that trigger callbacks
     PATTERN_CALL = r"\{@(\w+)\((.*?)\)\}"
+    # A ```prowl block shows the language to the model, so its braces must not parse as variables
+    PATTERN_MASK = r'```prowl.*?```'
     # Matches markdown randomness on single-line values for stripping
     PATTERN_STRIP = ' .-_*>#`\n'
     # One default for every entry point. A blank line, or a markdown header.
@@ -263,6 +265,18 @@ class prowl:
         return max_tokens, temperature, opts
 
     @staticmethod
+    def shape(template, start, end):
+        # Inline or block, decided by the three characters around the declaration and nothing else:
+        # alone on its line, and followed by a blank one. `fill` appends a newline before walking,
+        # which is why a variable on the last line still counts as block.
+        #
+        # Named because it is the rule most often broken by accident -- a missing blank line
+        # truncates a 1024-token narrative to its first line, invisibly -- so anything that shows
+        # a script to a human should be able to show this, and agree with fill() when it does.
+        mult = template[end:end + 1] == "\n" and template[start - 1:start] == "\n"
+        return 'block' if (template[end:end + 2] == "\n\n" and mult) else 'inline'
+
+    @staticmethod
     def extract_lists(text):
         pattern = prowl.PATTERN_LIST
         
@@ -328,7 +342,7 @@ class prowl:
         # Neutralize the braces inside ```prowl blocks so they don't parse as variables.
         # The mask is the same length as the original, so match offsets stay valid
         # against the unmasked text that fill() slices.
-        return re.sub(r'```prowl.*?```', lambda m: re.sub(r'[{}]', '\x00', m.group()), text, flags=re.DOTALL)
+        return re.sub(prowl.PATTERN_MASK, lambda m: re.sub(r'[{}]', '\x00', m.group()), text, flags=re.DOTALL)
 
     @staticmethod
     def strip_stops(value, stops):
@@ -463,10 +477,8 @@ class prowl:
             start_index = match.start()
             text_segment = template[last_index:start_index]
             me = match.end()
-            nnchar, nchar, schar = template[me:me+2], template[me:me+1], template[start_index-1:start_index]
-            mult = nchar == "\n" and schar == "\n"
-            multiline = nnchar == "\n\n" and mult
-            
+            multiline = prowl.shape(template, start_index, me) == 'block'
+
             prompt += text_segment
 
             var_type = match.group(2)

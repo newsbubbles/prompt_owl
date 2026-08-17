@@ -68,7 +68,46 @@
 
 - `temperature` is optional; it defaults to `prowl.TEMPERATURE` (0.0).
 
+- **`prowl studio`** — a local sandbox for writing, arranging and running stacks.
+  `pip install prompt-owl[studio]`, then `prowl-studio`. Loopback only by default: a run spends
+  money and `@file` reads the filesystem.
+
+  A workspace is just a directory of `.prowl` and `.prout` files under `~/.prowl/workspaces`
+  (`--root` to move it, subdirectories to partition). What you edit in the studio is a file the
+  CLI and the MCP server can also see — the sandbox is never a place where scripts live that
+  prowl itself cannot reach.
+
+  `GET /api/lang` serves the interpreter's own constants — `PATTERN_FILL`, `PATTERN_CALL`,
+  `PATTERN_ARGS`, `PATTERN_LIST`, `PATTERN_MASK`, `TYPES`, `OPTIONS`, `STOPS` — so the editor's
+  highlighter compiles prowl's grammar instead of carrying a copy of it. The patterns are valid
+  JavaScript regex exactly as written; only the flags differ. A highlighter that disagrees with
+  the interpreter is worse than none, because it paints inert prose as a live declaration.
+
+  `prowl/studio/core.py` is the single definition of "assemble a stack and check it", and
+  `prowl/mcp.py` now imports it rather than keeping its own.
+
+- **`prowl.shape(template, start, end)`** returns `'block'` or `'inline'` for a declaration, using
+  the three-character rule `fill` has always used inline. Named so that anything showing a script
+  to a human can show the shape too, and agree with `fill` when it does — a missing blank line
+  truncating a 1024-token narrative to one line is the most common prowl bug and it is invisible
+  in the source.
+
+- **`ProwlStack(include_library=False)`** stops the relative `prompts/` folder being appended to
+  every stack, which made a stack's contents depend on the process working directory. Default is
+  unchanged.
+
 ### Fixed
+
+- **`validate()` and `forecast()` disagreed with `fill()` about ```prowl blocks.** `fill` masks
+  those blocks so their braces are inert, but `inspect_vars` and `forecast` scanned the raw source.
+  A variable written inside a block therefore counted as *declared* without ever being declared —
+  so a stack referencing it validated clean and then failed at generation time — and `forecast`
+  budgeted for a call that never happens. Both mask first now. Found by putting the studio's
+  outline next to the stack's own report of the same file and noticing they named different
+  variables.
+
+  Tool calls are the deliberate exception: `run_callbacks` scans the accumulated prompt, so a
+  `{@tool()}` inside a ```prowl block **does** fire, and `inspect_tools` matches that.
 
 - **`{@script}` blocks corrupted the prompt after them.** `mask_prowl_code_blocks` replaced a
   ```` ```prowl ```` block with a shorter placeholder, but matches found on the masked text were

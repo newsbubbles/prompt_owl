@@ -13,12 +13,16 @@ setup(
     ],
     extras_require={
         'mcp': ['mcp>=1.2.0'],
+        'studio': ['fastapi>=0.100.0', 'uvicorn>=0.23.0'],
     },
+    package_data={'prowl': ['studio/web/*', 'studio/web/*/*']},
+    include_package_data=True,
     python_requires='>=3.9',
     entry_points={
         'console_scripts': [
             'prowl=prowl.cli:main',
             'prowl-mcp=prowl.mcp:main',
+            'prowl-studio=prowl.studio.server:main',
         ],
     },
     # Additional metadata

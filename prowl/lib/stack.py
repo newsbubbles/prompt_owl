@@ -17,10 +17,14 @@ if CHROMADB_ENABLED:
 PROWL_PROMPT_FOLDER = 'prompts/'
 
 class ProwlStack:
-    def __init__(self, folder=PROWL_PROMPT_FOLDER, files=None, stream_level=prowl.StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_event=None, tools=None, silent:bool=False):
+    def __init__(self, folder=PROWL_PROMPT_FOLDER, files=None, stream_level=prowl.StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_event=None, tools=None, silent:bool=False, include_library:bool=True):
         self.silent = silent
         self.load_files = files
         self.folder = folder
+        # `prompts/` is a relative path, so leaving it on means a stack's contents depend on the
+        # process working directory. Default stays on; set False when the folders are the whole
+        # truth, as they are for a workspace.
+        self.include_library = include_library
 
         # Tasks
         self.use_chromadb = CHROMADB_ENABLED
@@ -95,8 +99,8 @@ class ProwlStack:
             self.default_tasks = self.load_files
         
         if isinstance(self.folder, str):
-            self.folder = [self.folder, PROWL_PROMPT_FOLDER]
-        if PROWL_PROMPT_FOLDER not in self.folder:
+            self.folder = [self.folder]
+        if self.include_library and PROWL_PROMPT_FOLDER not in self.folder:
             self.folder.append(PROWL_PROMPT_FOLDER)
         for folder in self.folder:
             if not folder.endswith('/'):
@@ -119,7 +123,9 @@ class ProwlStack:
         errors = []
         pattern = re.compile(prowl.PATTERN_FILL)
         #print(pattern)
-        for match in pattern.finditer(code):
+        # Mask first, exactly as fill() does. Unmasked, a variable inside a ```prowl block counts
+        # as declared here and is never declared there, so validate passes a stack that fails.
+        for match in pattern.finditer(prowl.mask_prowl_code_blocks(code)):
             var_name = match.group(1)
             if match.group(3) is not None: # the parentheses declare, the type only annotates
                 #print("\tDECLARE", var_name, match.group(2))
@@ -221,7 +227,8 @@ class ProwlStack:
         for task in tasks:
             if task not in self.tasks:
                 continue
-            for m in re.finditer(prowl.PATTERN_FILL, self.tasks[task]['code']):
+            code = prowl.mask_prowl_code_blocks(self.tasks[task]['code'])
+            for m in re.finditer(prowl.PATTERN_FILL, code):
                 if m.group(3) is None: # only declarations cost anything
                     continue
                 try:
