@@ -108,6 +108,16 @@
 
 ### Fixed
 
+- **The `word` type never produced a value.** Its stops were `['\n', ' ']`, and a completion opens
+  with its own leading space, so the space stop fired at offset zero and the value came back empty
+  — every time, on every model. `{name:word(12, 0.7)}` after a label burned its retries and raised.
+  Measured directly: `stop=['\n',' ']` returns `''`, `stop=['\n']` returns `' \`component\`'`.
+  `read()` already takes the first word, so the space stop was redundant as well as fatal.
+
+  Worth noting how it surfaced: the run failed loudly, naming `name_1`, instead of storing an empty
+  string and producing a plausible table. That is the retries-key-on-validity change doing its job
+  while the type it was checking was wrong.
+
 - **An empty `.prowl` file made `ProwlStack` unconstructible.** `prowl.load` returns `""` for an
   empty file, `""` is falsy, and `add_task` chained `load(x.prowl) or load(x.md)` — so an empty
   script fell through to a `.md` that was not there, got registered with `code: None`, and the

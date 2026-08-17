@@ -62,7 +62,9 @@ class prowl:
     # stop at the next markdown header only, never at a blank line. A blank line inside prose is
     # not the end of the value; that default is what cut a chain-of-thought off after one sentence.
     TYPES = {
-        'word':   {'stops': ['\n', ' '], 'bounded': True},
+        # NOT ' ': a completion opens with its own leading space, so a space stop fires at offset
+        # zero and the value comes back empty every time. `read` takes the first word anyway.
+        'word':   {'stops': ['\n'],      'bounded': True},
         'line':   {'stops': ['\n'],      'bounded': True},
         'number': {'stops': ['\n'],      'bounded': True},
         'bool':   {'stops': ['\n'],      'bounded': True},
