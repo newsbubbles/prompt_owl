@@ -116,12 +116,17 @@ class ProwlStack:
     def inspect_vars(self, code, task_name=None):
         #print(">> VAR INSPECT", task_name)
         declared, referenced, required = {}, {}, {}
+        errors = []
         pattern = re.compile(prowl.PATTERN_FILL)
         #print(pattern)
         for match in pattern.finditer(code):
             var_name = match.group(1)
             if match.group(2) is not None:
                 #print("\tDECLARE", var_name, match.group(2))
+                try: # bad options are a validation failure, not a generation failure
+                    prowl.parse_args(match.group(2), var_name)
+                except ValidationError as e:
+                    errors.append(e)
                 declared[var_name] = match.start()
             else:
                 #print("\tREFERENCE", var_name)
@@ -132,6 +137,7 @@ class ProwlStack:
             'declared': list(declared.keys()),
             'referenced': list(referenced.keys()),
             'required': required,
+            'errors': errors,
             'task_name': task_name,
         }
         
@@ -250,7 +256,11 @@ class ProwlStack:
                 t = self.tasks[task]
                 vars, tools = t['inspect']
                 #print(task, vars, tools)
-                
+
+                # Bad declaration options in this script
+                for e in vars.get('errors', []):
+                    report_error(e)
+
                 # Update requried vars from tools call
                 # tools are var names, so need to make sure tool brings that back into vars
                 for tin in tools['tools']['required']:

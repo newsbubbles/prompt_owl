@@ -2,6 +2,31 @@
 
 ## 0.2.0 (unreleased)
 
+### Added
+
+- **Declaration options.** After `(max_tokens, temperature)` a declaration may carry named
+  options: `stop`, `n`, `logprobs`, `model`, and the bare flags `block` / `inline`.
+
+  ```prowl
+  {label(12)}                                  temperature defaults to 0.0
+  {code(600, 0.1, stop=```)}                   its own stop, so blank lines are legal
+  {cause(200, 0.7, n=3)}                       alternatives kept in var.data['candidates']
+  {plan(400, 0.2, model=qwen/qwen3-32b)}       per-variable model
+  {story(1024, 0.8, block)}                    force multiline regardless of whitespace
+  {note(30, 0.5, inline)}                      force single-line
+  ```
+
+  `stop` is per-variable and overrides the run default, so one script can mix a one-line answer
+  with a code block. `block`/`inline` override the surrounding-whitespace heuristic, which
+  remains the default so no existing script changes.
+
+  **Unknown option names raise `ValidationError` (1005) rather than being forwarded.** Options
+  become request parameters, and silently passing a typo through is precisely how `stops=`
+  instead of `stop=` disabled stop sequences on every auto-continuation. `-validate` reports
+  them without generating anything.
+
+- `temperature` is optional; it defaults to `prowl.TEMPERATURE` (0.0).
+
 ### Fixed
 
 - **`{@script}` blocks corrupted the prompt after them.** `mask_prowl_code_blocks` replaced a

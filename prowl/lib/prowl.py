@@ -11,12 +11,17 @@ from typing import Any
 from .vllm import VLLM
 from .tool import ProwlTool
 from .log import log
-from .error import APIError
+from .error import APIError, ValidationError
 
 class prowl:
     
-    # Pattern to match both variable declarations and references
-    PATTERN_FILL = r'\{([a-zA-Z_0-9]+)(?:\((\d+),\s*([0-9.]+)\))?\}'
+    # Pattern to match both variable declarations and references.
+    # The argument list is captured whole and parsed by parse_args, but it must still
+    # START with an integer to count as a declaration. That is what keeps prose like
+    # "use the syntax {variable_name(max_tokens, temperature)}" from becoming one.
+    PATTERN_FILL = r'\{([a-zA-Z_0-9]+)(?:\((\d+[^)]*)\))?\}'
+    # Splits an argument list on commas that are not inside quotes
+    PATTERN_ARGS = r'''(?:[^,"']|"[^"]*"|'[^']*')+'''
     # Regular expression for matching bullets or numbered list items
     PATTERN_LIST = r'^\s*(?:\*|\+|\-|\d+\.)\s+(.*)$'
     # Matches tool calls that trigger callbacks
@@ -26,6 +31,14 @@ class prowl:
     # One default for every entry point. A blank line, or a markdown header on a new line.
     # Bare `##` is deliberately not here: it stops on `##` mid-line, inside code and prose.
     STOPS = ["\n\n", "\n#"]
+    # Temperature when a declaration gives max_tokens only
+    TEMPERATURE = 0.0
+    # Declaration options after (max_tokens, temperature). `block`/`inline` override the
+    # whitespace shape heuristic, the rest go to the API. Unknown keys raise rather than
+    # pass through: kwargs land straight in the request body, which is how `stops=` instead
+    # of `stop=` silently disabled stop sequences on every auto-continuation.
+    OPTIONS = ('stop', 'n', 'logprobs', 'model', 'block', 'inline')
+    FLAGS = ('block', 'inline')
     
     # Stream levels tell 
     class StreamLevel(Enum):
@@ -150,6 +163,44 @@ class prowl:
                 'usage': self.usage.dict(),
                 'output': self.output,
             }
+
+    @staticmethod
+    def parse_args(text, var_name=None):
+        # (max_tokens, temperature) positionally, then key=value options. Values may be quoted.
+        pos, opts = [], {}
+        for part in re.findall(prowl.PATTERN_ARGS, text):
+            part = part.strip()
+            if not part:
+                continue
+            key, eq, value = part.partition('=')
+            key = key.strip()
+            if not eq:
+                if key in prowl.FLAGS:
+                    opts[key] = True
+                else:
+                    pos.append(part.strip('"\''))
+                continue
+            if key not in prowl.OPTIONS:
+                raise ValidationError(1005, f"Unknown option `{key}` on `{var_name}`",
+                    data={'variable': var_name, 'option': key, 'known': list(prowl.OPTIONS)})
+            opts[key] = value.strip().strip('"\'')
+
+        if not pos:
+            raise ValidationError(1006, f"`{var_name}` declares no max_tokens",
+                data={'variable': var_name, 'args': text})
+        try:
+            max_tokens = int(pos[0])
+            temperature = float(pos[1]) if len(pos) > 1 else prowl.TEMPERATURE
+        except ValueError:
+            raise ValidationError(1006, f"`{var_name}` has non-numeric (max_tokens, temperature): {text}",
+                data={'variable': var_name, 'args': text})
+
+        if 'stop' in opts:
+            opts['stop'] = [s.encode().decode('unicode_escape') for s in opts['stop'].split(',')]
+        for k in ('n', 'logprobs'):
+            if k in opts:
+                opts[k] = int(opts[k])
+        return max_tokens, temperature, opts
 
     @staticmethod
     def extract_lists(text):
@@ -355,7 +406,13 @@ class prowl:
                 if callbacks:
                     prompt, variables, stop = await prowl.run_callbacks(prompt, callbacks, variables, stream_level=stream_level, variable_event=variable_event, script_name=script_name)
                 # It's a declaration, ask the LLM for a value
-                int_arg, float_arg = int(match.group(2)), float(match.group(3))
+                int_arg, float_arg, opts = prowl.parse_args(match.group(2), var_name)
+                # `block`/`inline` override what the surrounding whitespace implied
+                if opts.pop('block', False):
+                    multiline = True
+                if opts.pop('inline', False):
+                    multiline = False
+                var_stops = opts.pop('stop', None) or stops
                 # Loop the call until a valid generated value is present for that variable
                 if not silent:
                     log.info(f"<< {var_name}({int_arg}, {float_arg}) >> multiline: {multiline}")
@@ -369,10 +426,11 @@ class prowl:
                             prompt.rstrip(" "),
                             max_tokens = int_arg,
                             temperature = float_arg + fex,
-                            stop = stops,
+                            stop = var_stops,
                             streaming = stream_level == prowl.StreamLevel.TOKEN,
                             stream_callback = token_event,
                             variable_name=var_name,
+                            **opts,
                         )
                         usage.add(r['usage'])
                     except APIError as e:
@@ -392,7 +450,7 @@ class prowl:
                         await asyncio.sleep(4)
                         continue
                     # get the final completion and perform cleanup from 0th choice
-                    completion = await prowl.align_conditioning(prompt, (var_name, int_arg, float_arg), r['choices'][0], usage, llm, multiline, continue_ratio=continue_ratio, stops=stops, stream_level=stream_level, token_event=token_event)
+                    completion = await prowl.align_conditioning(prompt, (var_name, int_arg, float_arg), r['choices'][0], usage, llm, multiline, continue_ratio=continue_ratio, stops=var_stops, stream_level=stream_level, token_event=token_event)
                     tries += 1
                     if tries >= max_retries:
                         left_context = None if len(prompt) < 30 else prompt[-30:].replace("\n", "\\n")
@@ -405,6 +463,8 @@ class prowl:
                 v = {'value': completion, 'usage': r['usage'], 'arg': (int_arg, float_arg)}
                 if generated_list:
                     v['list'] = generated_list
+                if len(r['choices']) > 1: # n>1: keep the alternatives, don't bill for them and drop them
+                    v['data'] = {'candidates': [c['text'].strip() for c in r['choices']]}
                 variable:prowl.Variable = prowl.push_var(variables, var_name, v)
                 prompt += completion
                 # TODO add this variable_event to the tool callback so that tool variables also return
