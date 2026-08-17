@@ -119,6 +119,20 @@ def write(ws, name, source, prout=None, folder=''):
     return read(ws, name)
 
 
+def rename(ws, name, to):
+    valid(to, 'script')
+    f = locate(ws, name)
+    if not f:
+        raise WorkspaceError(f"no script `{name}` in workspace `{ws}`")
+    if to != name and locate(ws, to):
+        raise WorkspaceError(f"`{to}` already exists in `{ws}`")
+    for ext in ('.prowl', '.prout'):
+        src = os.path.join(f, name + ext)
+        if os.path.exists(src):
+            os.rename(src, os.path.join(f, to + ext))
+    return read(ws, to)
+
+
 def remove(ws, name):
     f = locate(ws, name)
     if not f:

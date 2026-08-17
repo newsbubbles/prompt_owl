@@ -44,6 +44,10 @@ class ScriptBody(BaseModel):
     folder: str = ''
 
 
+class RenameBody(BaseModel):
+    to: str
+
+
 class CheckBody(BaseModel):
     scripts: List[str]
     inputs: Dict[str, str] = {}
@@ -108,6 +112,12 @@ def put_script(ws: str, name: str, body: ScriptBody):
     d = workspace.write(ws, name, body.prowl, prout=body.prout, folder=body.folder)
     d['outline'] = lang.outline(d['prowl'] or '')
     return d
+
+
+@app.post('/api/w/{ws}/script/{name}/rename')
+def rename_script(ws: str, name: str, body: RenameBody):
+    # server side so the .prout moves with its script and a clash is refused rather than raced
+    return workspace.rename(ws, name, body.to)
 
 
 @app.delete('/api/w/{ws}/script/{name}')

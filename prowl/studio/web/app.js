@@ -70,7 +70,7 @@ async function loadBrowser() {
   S.tools = d.tools || []
   const ul = $('#browser'); ul.replaceChildren()
   for (const s of d.scripts) {
-    const li = el('li')
+    const li = el('li', 'entry')
     // a real button, so the list is reachable by keyboard and announces itself as clickable
     const b = el('button', 'row' + (S.stack.includes(s.name) ? ' in' : ''))
     b.type = 'button'
@@ -81,7 +81,8 @@ async function loadBrowser() {
     if (s.errors.length) b.append(el('span', 'tag bad', String(s.errors.length)))
     if (s.has_prout) b.append(el('span', 'tag', 'prout'))
     b.onclick = () => { if (!S.stack.includes(s.name)) S.stack.push(s.name); openScript(s.name) }
-    li.append(b)
+    li.append(b, act('✎', `rename ${s.name}`, () => renameScript(s.name)),
+                 act('×', `delete ${s.name}`, () => deleteScript(s.name)))
     ul.append(li)
   }
   if (!d.scripts.length)
@@ -89,6 +90,44 @@ async function loadBrowser() {
   for (const [name, folders] of Object.entries(d.collisions || {}))
     ul.append(el('li', 'muted bad', `name collision: ${name} in ${folders.join(', ')}`))
   renderStack()
+}
+
+const NAME_OK = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/   // mirrors workspace.NAME on the server
+
+function act(glyph, title, fn) {
+  const b = el('button', 'act', glyph)
+  b.type = 'button'; b.title = title
+  b.onclick = e => { e.stopPropagation(); fn() }
+  return b
+}
+
+function askName(what, current) {
+  const n = (prompt(what, current || '') || '').trim()
+  if (!n) return null
+  if (!NAME_OK.test(n)) { alert(`"${n}" is not a usable name — letters, digits, dot, dash and underscore only.`); return null }
+  return n
+}
+
+async function renameScript(name) {
+  const to = askName(`rename ${name} to`, name)
+  if (!to || to === name) return
+  try {
+    await api(`/w/${S.ws}/script/${name}/rename`, {to})
+    // the stack refers to scripts by name, so it has to move with the file
+    S.stack = S.stack.map(n => (n === name ? to : n))
+    if (S.open === name) S.open = to
+    await loadBrowser(); await openScript(S.open)
+  } catch (e) { alert(e.message) }
+}
+
+async function deleteScript(name) {
+  if (!confirm(`Delete ${name}? The .prowl and its .prout are removed from disk.`)) return
+  try {
+    await api(`/w/${S.ws}/script/${name}`, {}, 'DELETE')
+    S.stack = S.stack.filter(n => n !== name)
+    if (S.open === name) S.open = S.stack[0] || null
+    await loadBrowser(); await openScript(S.open)
+  } catch (e) { alert(e.message) }
 }
 
 // ---------------------------------------------------------------- the stack
@@ -488,10 +527,14 @@ $('#ws-new').onclick = async () => {
   } catch (e) { alert(e.message) }
 }
 $('#script-new').onclick = async () => {
-  const name = prompt('script name'); if (!name) return
+  if (!S.ws) return alert('Make a workspace first.')
+  const name = askName('new script name'); if (!name) return
   try {
-    await api(`/w/${S.ws}/script/${name}`, {prowl: `## ${name}\n`}, 'PUT')
-    await loadBrowser(); S.stack.push(name); openScript(name)
+    await api(`/w/${S.ws}/script/${name}`, {prowl: `## ${name}\nWrite the instruction here, ending in a colon:\n`}, 'PUT')
+    await loadBrowser()
+    if (!S.stack.includes(name)) S.stack.push(name)
+    await openScript(name)
+    $('#editor').focus()
   } catch (e) { alert(e.message) }
 }
 $('#editor').oninput = () => { const n = $('#editor').dataset.name; if (n) { S.dirty.add(n); renderStack() } paint() }
