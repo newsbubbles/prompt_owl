@@ -30,6 +30,10 @@ class prowl:
     PATTERN_MASK = r'```prowl.*?```'
     # Matches markdown randomness on single-line values for stripping
     PATTERN_STRIP = ' .-_*>#`\n'
+    # Bounded values get a wider net. A model asked for one word after a label answers
+    # ' "Evelyn Deveraux"' or ' (the name of your character)', and the first token of those is
+    # punctuation, not a value. Quotes and brackets are never part of the word that was wanted.
+    WORD_STRIP = PATTERN_STRIP + '"\'()[]{}<>:;,!?|/\\'
     # One default for every entry point. A blank line, or a markdown header.
     # Bare `##` is here on purpose even though it also fires mid-line: models routinely run a
     # header onto the current line ("Since## Step 2"), which `\n#` cannot catch, and every
@@ -420,7 +424,8 @@ class prowl:
                 return 'false', True
             return text.strip(), False
         if var_type == 'word':
-            words = text.strip(prowl.PATTERN_STRIP).split()
+            words = [w.strip(prowl.WORD_STRIP) for w in text.strip(prowl.WORD_STRIP).split()]
+            words = [w for w in words if w]
             return (words[0] if words else ""), bool(words)
         if var_type == 'list':
             value = text.strip()
@@ -525,6 +530,7 @@ class prowl:
                 completion, ok, truncated = "", False, False
                 max_retries, tries = 4, 0
                 fad = 1.0 - float_arg
+                call_stops = var_stops
                 while True:
                     fex = fad * (tries / max_retries)
                     try:
@@ -532,7 +538,7 @@ class prowl:
                             prompt.rstrip(" "),
                             max_tokens = int_arg,
                             temperature = float_arg + fex,
-                            stop = var_stops,
+                            stop = call_stops,
                             streaming = stream_level == prowl.StreamLevel.TOKEN,
                             stream_callback = token_event,
                             variable_name=var_name,
@@ -556,10 +562,19 @@ class prowl:
                         log.warn(f"{type(e).__name__} on `{var_name}`: {e}, retry {tries}/{max_retries}")
                         await asyncio.sleep(4)
                         continue
+                    raw = r['choices'][0].get('text') or ""
                     completion, ok, truncated = await prowl.resolve(
                         llm, prompt, r['choices'][0], var_type, (var_name, int_arg, float_arg),
                         usage, var_stops, continue_ratio=continue_ratio, multiline=multiline,
                         stream_level=stream_level, token_event=token_event)
+                    # A stop can fire on the model's very first token: asked for a bounded value
+                    # after a label, some models open with a newline, and `\n` then ends the
+                    # generation at offset zero. Retrying with the same stops can never help, so
+                    # the next attempt goes without them and `read` does the trimming instead.
+                    if not ok and not raw.strip() and call_stops:
+                        call_stops = None
+                        if not silent:
+                            log.warn(f"`{var_name}` stopped on its first token; retrying unbounded")
                     # Validity is the test, not truncation. A truncated completion that still
                     # yields a good value gives us what was asked for; the rest was going to be
                     # discarded anyway. Truncation only explains a failure, it isn't one.
