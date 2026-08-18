@@ -10,7 +10,11 @@
        one name it is Prompt Owl. -->
   <img id="mark" src="/prowl_logo.png" alt="Prompt Owl" title="Prompt Owl" width="25" height="29">
   <select id="ws-pick" title="workspace"></select>
-  <button id="ws-new" class="ghost" title="new workspace">+</button>
+  <div class="menu">
+    <button id="ws-menu-open" class="ghost" title="new, import or export a workspace">+</button>
+    <div id="ws-menu" class="dropdown" hidden></div>
+  </div>
+  <input id="ws-file" type="file" accept=".zip,application/zip" hidden>
   <div class="finder">
     <input id="model" placeholder="search models…" spellcheck="false" autocomplete="off">
     <div id="picker" class="picker" hidden></div>

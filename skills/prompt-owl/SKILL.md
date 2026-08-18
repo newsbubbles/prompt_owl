@@ -22,11 +22,15 @@ Two skills, split by what you are doing:
 
 ## Starting and stopping it
 
-Install once, from the repo root:
+Install once, from the repo root. **Never `pip install prompt-owl`**: PyPI has 0.1.17, which is a
+different and much older library, and installing it will look like it worked.
 
 ```bash
-pip install -e ".[studio]"
+pip install -e ".[studio]"     # or: pip install -r requirements.txt
 ```
+
+If the environment cannot be modified, every entry point runs as a module instead:
+`python -m prowl.studio.server`, `python -m prowl.cli`, `python -m prowl.mcp`.
 
 Then, and this is the part harnesses get wrong: **never start it with a blocking shell call.** It
 is a server; it does not return.
@@ -139,6 +143,8 @@ Prefer this over clicking. Everything is under `/api`, JSON in and out.
 | GET | `/w/{ws}/history?stack=&by=&clean=&limit=` | recorded samples + statistics |
 | DELETE | `/w/{ws}/history?stack=` | drop recorded samples |
 | GET | `/w/{ws}/export?stack=&format=&variable=` | csv, jsonl, json, messages, alpaca |
+| GET | `/w/{ws}/export.zip?runs=0\|1` | the whole workspace as a portable bundle |
+| POST | `/workspaces/import?name=&peek=0\|1` | create a workspace from bundle bytes (raw body) |
 | POST | `/w/{ws}/embed` | cluster a variable's values by meaning |
 | GET | `/probe` | does the configured endpoint answer, and in which shape |
 
@@ -216,6 +222,26 @@ growing prompt with every earlier value spliced in, rather than a template with 
 
 Finished documents are kept in `runs/documents.jsonl` alongside `runs/history.jsonl`; the training
 formats read the documents, the rest read the samples.
+
+### Moving a whole workspace
+
+`GET /w/{ws}/export.zip` is the scripts, their `.prout` files, `stacks.json` and a
+`prompt-owl.json` manifest. Recorded runs are left out unless `runs=1`, since they are the largest
+thing in a workspace and they carry the inputs every run was given. Nothing is a new format: unzip
+it anywhere and the CLI runs it.
+
+`POST /workspaces/import?name=X` takes the raw zip as the request body (not multipart). Add
+`peek=1` to read the manifest without writing anything, which is how the UI describes a bundle
+before importing it.
+
+Import is the untrusted direction, so it refuses rather than sanitises: `..`, absolute paths,
+drive letters, backslash escapes, symlinks, entries over 4MB, bundles over 32MB or 2000 files,
+illegal script names, and any existing workspace of the same name. The manifest is advisory only,
+since whoever made the bundle wrote it; the entries are checked regardless.
+
+**Report `reach` before running an imported bundle.** The manifest lists which tools the scripts
+call, and `@file` reads and writes local files while `@search` and `@navigate` fetch the web. An
+imported prompt is somebody else's code.
 
 ## The loop that produces a result
 

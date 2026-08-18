@@ -26,6 +26,13 @@ prowl/prompts/      the bundled prompt library
 skills/             the two agent skills above
 ```
 
+## Install
+
+Python 3.9+, from a clone. `pip install -e ".[studio]"` or `pip install -r requirements.txt`.
+**Never `pip install prompt-owl`**: PyPI has 0.1.17, a different and much older library, and it
+will look like it worked. Entry points also run as modules (`python -m prowl.studio.server`,
+`python -m prowl.cli`, `python -m prowl.mcp`) when the environment cannot be changed.
+
 ## Working rules
 
 - **Restart the studio server after editing anything under `prowl/`.** It runs without `--reload`,

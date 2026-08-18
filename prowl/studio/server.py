@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import core, embed, export, history, lang, workspace
+from . import bundle, core, embed, export, history, lang, workspace
 from ..lib.prowl import prowl
 from ..lib.vllm import PREFILL
 from ..lib.log import log
@@ -263,6 +263,31 @@ def list_workspaces():
 def new_workspace(body: NewWorkspace):
     workspace.create(body.name)
     return {'name': body.name}
+
+
+@app.post('/api/workspaces/import')
+async def import_workspace(request: Request, name: str, peek: bool = False):
+    """Create a workspace from a bundle. The zip arrives as the raw body rather than multipart,
+    which keeps `python-multipart` out of the dependency list for one upload.
+
+    `peek=1` reads the manifest and returns without writing anything, so the UI can say what is
+    in a bundle before it lands."""
+    data = await request.body()
+    if not data:
+        return JSONResponse(status_code=400, content={'error': 'no file was sent'})
+    if peek:
+        return {'manifest': bundle.manifest(data), 'bytes': len(data)}
+    return bundle.unpack(data, name)
+
+
+@app.get('/api/w/{ws}/export.zip')
+def export_workspace(ws: str, runs: bool = False):
+    data, files = bundle.pack(ws, runs=runs)
+    tail = '-with-history' if runs else ''
+    return Response(content=data, media_type='application/zip', headers={
+        'Content-Disposition': f'attachment; filename="{ws}{tail}.prompt-owl.zip"',
+        'X-Prompt-Owl-Files': str(len(files)),
+    })
 
 
 @app.get('/api/w/{ws}/scripts')

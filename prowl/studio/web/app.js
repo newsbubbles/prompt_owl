@@ -1191,12 +1191,91 @@ $('#ws-pick').onchange = async e => {
   restoreInputs(); await loadBrowser()
 }
 $('#stack-new').onclick = newStack
-$('#ws-new').onclick = async () => {
-  const name = prompt('workspace name'); if (!name) return
-  try { await api('/workspaces', {name}); const d = await api('/workspaces')
-    $('#ws-pick').replaceChildren(...d.workspaces.map(w => el('option', null, w)))
-    $('#ws-pick').value = name; S.ws = name; S.stack = []; await loadBrowser()
+// ------------------------------------------------------ workspace menu
+
+async function refreshWorkspaces(pick) {
+  const d = await api('/workspaces')
+  $('#ws-pick').replaceChildren(...d.workspaces.map(w => el('option', null, w)))
+  if (pick) {
+    $('#ws-pick').value = pick
+    S.ws = pick; S.stack = []; S.open = null; S.stackName = null; S.saved = null
+    S.hist = null; S.histSig = null
+    restoreInputs()
+    await loadBrowser()
+  }
+}
+
+async function createWorkspace() {
+  const name = askName('new workspace name')
+  if (!name) return
+  try { await api('/workspaces', {name}); await refreshWorkspaces(name) }
+  catch (e) { alert(e.message) }
+}
+
+// A workspace is a folder of .prowl files, so a bundle is that folder zipped with its stacks.json
+// and a manifest. Nothing to install and nothing to convert: unzip it anywhere and the CLI runs it.
+function exportWorkspace(runs) {
+  if (!S.ws) return alert('No workspace selected.')
+  location.href = `/api/w/${S.ws}/export.zip${runs ? '?runs=1' : ''}`
+}
+
+async function importWorkspace(file) {
+  const buf = await file.arrayBuffer()
+  const post = (q) => fetch('/api/workspaces/import?' + q, {
+    method: 'POST', headers: {'content-type': 'application/zip'}, body: buf,
+  }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error || d.detail); return d })
+
+  let peek = {}
+  try { peek = await post('name=peek&peek=1') } catch (e) { /* a bundle need not carry a manifest */ }
+  const m = peek.manifest || {}
+  const suggested = (m.name || file.name.replace(/\.zip$/i, '').replace(/\.prompt-owl$/i, ''))
+    .replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 64)
+
+  // What the scripts in there will be able to do, said before it is imported rather than after.
+  const reach = Object.entries(m.reach || {})
+  const summary = [
+    m.scripts ? `${m.scripts.length} scripts` : null,
+    m.stacks && m.stacks.length ? `${m.stacks.length} stacks` : null,
+    m.runs_included ? 'includes recorded runs' : null,
+  ].filter(Boolean).join(', ')
+  if (reach.length && !confirm(
+      `This bundle's scripts call tools that reach outside the model:\n\n` +
+      reach.map(([t, why]) => `  @${t}: ${why}`).join('\n') +
+      `\n\nImport it anyway?`)) return
+
+  const name = askName(summary ? `import as (${summary})` : 'import this bundle as', suggested)
+  if (!name) return
+  try {
+    const d = await post('name=' + encodeURIComponent(name))
+    await refreshWorkspaces(d.name)
+    if (d.skipped.length)
+      alert(`Imported ${d.files.length} files. ${d.skipped.length} entries were not part of a ` +
+            `workspace and were left out:\n\n${d.skipped.slice(0, 12).join('\n')}`)
   } catch (e) { alert(e.message) }
+}
+
+const WS_MENU = [
+  ['+ new workspace', createWorkspace],
+  ['⤒ import from zip', () => $('#ws-file').click()],
+  ['⤓ export workspace', () => exportWorkspace(false)],
+  ['⤓ export with history', () => exportWorkspace(true)],
+]
+
+{
+  const box = $('#ws-menu')
+  for (const [label, fn] of WS_MENU) {
+    const b = el('button', 'item', label)
+    b.type = 'button'
+    b.onclick = () => { box.hidden = true; fn() }
+    box.append(b)
+  }
+  $('#ws-menu-open').onclick = e => { e.stopPropagation(); box.hidden = !box.hidden }
+  addEventListener('click', e => { if (!e.target.closest('.menu')) box.hidden = true })
+  $('#ws-file').onchange = e => {
+    const f = e.target.files[0]
+    e.target.value = ''            // so the same file can be picked twice
+    if (f) importWorkspace(f)
+  }
 }
 $('#script-new').onclick = async () => {
   if (!S.ws) return alert('Make a workspace first.')

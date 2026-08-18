@@ -14,6 +14,10 @@ setup(
     extras_require={
         'mcp': ['mcp>=1.2.0'],
         'studio': ['fastapi>=0.100.0', 'uvicorn>=0.23.0'],
+        # Built-in tool integrations. Optional on purpose: a stack that never calls {@comfy}
+        # should not need Pillow, and core.py skips any tool whose dependency is absent.
+        'tools': ['pytz>=2023.3', 'pillow>=10.0.0', 'websockets>=11.0'],
+        'rag': ['chromadb>=0.4.0'],
     },
     package_data={'prowl': ['studio/web/*', 'studio/web/*/*']},
     include_package_data=True,

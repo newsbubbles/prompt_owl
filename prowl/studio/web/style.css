@@ -104,6 +104,18 @@ button { cursor: pointer; }
 }
 .go:disabled { background: var(--line); color: var(--dim); cursor: not-allowed; }
 .go.stop { background: var(--bad); color: #200; }
+.menu { position: relative; }
+.dropdown {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 190px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .45);
+}
+.dropdown .item {
+  display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--ink);
+  padding: 6px 10px; border-radius: 5px; font: 12px var(--mono); white-space: nowrap;
+}
+.dropdown .item:hover { background: color-mix(in oklab, var(--accent) 14%, transparent); color: var(--accent); }
+
 .finder { position: relative; }
 .picker {
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;

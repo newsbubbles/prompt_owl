@@ -1,0 +1,7 @@
+# Delegates to setup.py so there is one list of dependencies and it cannot drift.
+#
+#   pip install -r requirements.txt
+#
+# is the same as `pip install -e ".[studio]"` from this directory. Drop the extra if you only
+# want the language and the CLI, or use ".[studio,mcp]" for the MCP server too.
+-e .[studio]

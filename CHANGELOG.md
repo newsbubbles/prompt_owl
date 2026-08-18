@@ -148,6 +148,21 @@ several models and looking at what each variable actually does over many runs.
   is the real growing prompt with every earlier value spliced in, rather than a template with the inputs
   pasted back. Finished documents persist to `runs/documents.jsonl`.
 
+- **Workspaces are portable.** `export.zip` is the scripts, their `.prout` files, `stacks.json`
+  and a manifest; import creates a workspace from one. Recorded runs are left out unless asked
+  for, since they are the largest thing in a workspace and carry the inputs every run was given.
+  Nothing is a new format: unzip a bundle anywhere and the CLI runs it. In the UI both live in a
+  menu under the `+` beside the workspace picker.
+
+  Import is the untrusted direction and refuses rather than sanitises: `..`, absolute paths, drive
+  letters, backslash escapes, symlinks, oversized entries, zip bombs, illegal script names, and
+  any workspace name already in use. The manifest is advisory, since whoever built the bundle
+  wrote it, so the entries are checked on their own.
+
+  It also reports **reach** before importing: which tools the scripts call, and what those tools
+  can touch. `@file` reads and writes local files. An imported prompt is somebody else's code, and
+  you should know that before pressing Run rather than after.
+
 - **Model capability probing.** The catalogue lists `stop` support; it cannot say whether a model
   *continues a document*. `GET /api/model-probe` spends five tokens and classifies the answer as
   `continues`, `echoes` (a chat-only model behind an adapter, so use chat prefill), `empty`, or
@@ -191,6 +206,19 @@ several models and looking at what each variable actually does over many runs.
 - **`ProwlStack(include_library=False)`** stops the relative `prompts/` folder being appended to
   every stack, which made a stack's contents depend on the process working directory. Default is
   unchanged.
+
+### Packaging
+
+- **Tool integrations are optional.** `prowl/studio/core.py` imported all eight built-in tools at
+  module level, and two of them have dependencies that were never declared: the time tool needs
+  `pytz`, the comfy tool needs `pillow` and `websockets`. A clean `pip install -e ".[studio]"`
+  therefore could not start the server at all. Tools are imported one at a time now and a tool
+  whose dependency is missing is simply not registered, saying so once at startup; `validate`
+  already reports a script that asks for a tool which is not loaded. New extras: `.[tools]` for
+  the built-in integrations, `.[rag]` for `chromadb`. Pillow should not be required to run a
+  prompt.
+- `requirements.txt` added, containing `-e .[studio]`, so `pip install -r requirements.txt` works
+  without a second dependency list to drift.
 
 ### Fixed
 

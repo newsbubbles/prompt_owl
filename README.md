@@ -35,16 +35,76 @@ What {name} is known for, in one line:
 
 ## Installation
 
+Python 3.9 or newer, and git.
+
+> **Do not `pip install prompt-owl`.** PyPI still has 0.1.17, which predates everything on this
+> page: no types, no options, no studio, no MCP server. Install from the repo.
+
+**macOS and Linux**
+
 ```bash
-pip install prompt-owl              # the language, the CLI, the tools
-pip install prompt-owl[studio]      # + the local studio
-pip install prompt-owl[mcp]         # + the MCP server
+git clone https://github.com/newsbubbles/prompt_owl.git
+cd prompt_owl
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[studio]"
 ```
 
-From a clone, `pip install -e ".[studio]"`.
+**Windows (PowerShell)**
 
-Set up an environment file for your OpenAI-compatible endpoint. A copy lives in
-`prowl/env.placeholder`:
+```powershell
+git clone https://github.com/newsbubbles/prompt_owl.git
+cd prompt_owl
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[studio]"
+```
+
+**Windows (Git Bash or WSL)** is the same as macOS, except the activate line is
+`source .venv/Scripts/activate`.
+
+`pip install -r requirements.txt` does exactly the same thing; that file delegates to `setup.py`
+so there is only ever one dependency list.
+
+| extra | adds | for |
+|---|---|---|
+| *(none)* | `requests`, `aiohttp` | the language, the CLI, and the tools that need nothing else |
+| `.[studio]` | `fastapi`, `uvicorn` | the local studio |
+| `.[mcp]` | `mcp` | the MCP server |
+| `.[tools]` | `pytz`, `pillow`, `websockets` | the `@time` and `@comfy` tools |
+| `.[rag]` | `chromadb` | `@recall` and `@collect` |
+
+Combine them: `pip install -e ".[studio,tools]"`. The integrations are optional on purpose, and a
+tool whose dependency is missing is simply not registered: it says so once at startup, and
+`validate` reports any script that asks for it before a single token is spent. Pillow should not
+be required to run a prompt.
+
+That puts three commands on PATH inside the venv:
+
+| command | is |
+|---|---|
+| `prowl` | the CLI, runs a stack from a folder |
+| `prowl-studio` | the local studio |
+| `prowl-mcp` | the MCP server |
+
+Every one of them also runs as a module, so nothing has to be installed on PATH and no venv has
+to be active:
+
+```bash
+python -m prowl.cli -folder=prompts/ input output
+python -m prowl.studio.server --env .env --port 8788
+python -m prowl.mcp
+```
+
+### Configure
+
+Copy the placeholder and edit it:
+
+```bash
+cp prowl/env.placeholder .env         # Windows PowerShell: copy prowl\env.placeholder .env
+```
+
+The file is read by `--env` on the studio, and by `load_dotenv()` or your shell everywhere else.
+It looks like this:
 
 ```bash
 PROWL_VLLM_ENDPOINT=http://localhost:8000
@@ -337,6 +397,10 @@ run spends money and `@file` reads the filesystem.
 - **Export** as `csv`, `jsonl`, `json`, or as training pairs (`messages`, `alpaca`). A run is one
   token sequence whose spans are named, so `completion[:start]` is exactly the prompt that produced
   `completion[start:end]`, and one run yields one pair per declaration.
+- **Portable workspaces.** Export one as a zip (scripts, `.prout` files, `stacks.json`, a
+  manifest, and optionally the recorded runs) and import someone else's. Both sit in the menu
+  under the `+` beside the workspace picker. Import refuses anything it cannot place safely, and
+  tells you which tools the incoming scripts call before you run them.
 - **Model probing.** The catalogue says which models support `stop`; it cannot say which can
   continue a document. The studio spends five tokens and tells you: `continues`, `echoes` (a
   chat-only model behind an adapter, so tick `chat`), or `unsupported`. It also disables reasoning
