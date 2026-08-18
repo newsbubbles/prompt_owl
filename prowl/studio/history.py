@@ -152,25 +152,81 @@ def stats(values):
     return d
 
 
-def summarise(rows):
-    """One row per (variable, model). Variables keep the order they were first seen in rather
-    than alphabetical order, because that is the order the document builds them in."""
-    order, groups = [], {}
+# Which axis the samples are cut along. `model` answers "do these models differ"; `input:language`
+# answers "does this prompt hold up in Japanese" -- the same values, a different question, and the
+# statistics are only worth anything once you can choose which one you are asking.
+AXES = ('model', 'provider', 'stack_name', 'script', 'type', 'run', 'none')
+
+
+def axis(r, by):
+    if by == 'none':
+        return ''
+    if by.startswith('input:'):
+        return (r.get('inputs') or {}).get(by[len('input:'):], '')
+    return r.get(by) or ''
+
+
+def keys(rows):
+    # Every input name seen, so the client can offer them as axes without guessing.
+    out = set()
     for r in rows:
-        k = (r.get('variable'), r.get('model') or '')
+        out.update((r.get('inputs') or {}))
+    return sorted(out)
+
+
+# A truncated `text` is a long answer cut short and still says what it says. A truncated `word`,
+# `line`, `number` or `bool` is a model that never hit the stop -- it wrote prose, and for a
+# number the "last number wins" rule then lifts a figure out of the middle of a sentence. Those
+# are not answers, and averaging them in produced a mean of 33.1 out of values including 0.75.
+BOUNDED = ('word', 'line', 'number', 'bool')
+
+
+def describe(rows, variable, group, clean=True):
+    kind = rows[-1].get('type')
+    used, dropped = rows, 0
+    if clean and kind in BOUNDED:
+        keep = [r for r in rows if not r.get('truncated')]
+        # unless that is all of them, in which case report the mess rather than an empty row
+        if keep:
+            used, dropped = keep, len(rows) - len(keep)
+    return {
+        'variable': variable, 'group': group,
+        'type': kind,
+        'temp': rows[-1].get('temp'),
+        'models': sorted({r.get('model') for r in rows if r.get('model')}),
+        'runs': len({r.get('run') for r in rows}),
+        'truncated': sum(1 for r in rows if r.get('truncated')),
+        'dropped': dropped,
+        'stats': stats([r.get('value') for r in used]),
+    }
+
+
+def summarise(rows, by='model', clean=True):
+    """One row per (variable, group). Variables keep the order they were first seen in rather than
+    alphabetical order, because that is the order the document builds them in.
+
+    Each variable also gets a pooled row across every group, when there is more than one. Pooled
+    and split answer different questions: three models each answering `7` every time is entropy
+    0.00 three times and 0.00 pooled, while three models each stuck on a *different* number is
+    0.00 three times and 1.58 pooled. Only having the split numbers hides that."""
+    order, groups, whole = [], {}, {}
+    for r in rows:
+        v = r.get('variable')
+        k = (v, axis(r, by))
         if k not in groups:
             groups[k] = []
             order.append(k)
         groups[k].append(r)
-    out = []
-    for k in order:
-        rs = groups[k]
-        out.append({
-            'variable': k[0], 'model': k[1],
-            'type': rs[-1].get('type'),
-            'temp': rs[-1].get('temp'),
-            'runs': len({r.get('run') for r in rs}),
-            'truncated': sum(1 for r in rs if r.get('truncated')),
-            'stats': stats([r.get('value') for r in rs]),
-        })
+        whole.setdefault(v, []).append(r)
+
+    seen, out = set(), []
+    for v, g in order:
+        if v not in seen:
+            seen.add(v)
+            splits = sum(1 for a, _ in order if a == v)
+            if splits > 1:
+                d = describe(whole[v], v, 'all', clean=clean)
+                d['pooled'] = splits
+                out.append(d)
+        out.append(describe(groups[(v, g)], v, g, clean=clean))
     return out

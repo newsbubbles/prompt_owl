@@ -12,6 +12,7 @@ const S = {
   dirty: new Set(), inputs: {}, needs: [], run: null, result: null, marks: null,
   // the stack under composition: its saved name, the spec it was saved as, its recorded past
   stackName: null, saved: null, hist: null, histSig: null, sweep: null, cap: 0,
+  by: 'model', varying: new Set(),
 }
 
 async function api(path, body, method) {
@@ -54,6 +55,7 @@ async function stream(path, body, on) {
 async function boot() {
   const [h, lang, ws] = await Promise.all([api('/health'), api('/lang'), api('/workspaces')])
   S.lang = lang
+  S.by = localStorage.getItem('prowl.studio.by') || 'model'
   useLang(lang)
   restoreModels()
   if (!S.models.length && h.model) S.models = [h.model]
@@ -210,6 +212,7 @@ function ghost(text, title, fn) {
 const spec = () => ({
   scripts: [...S.stack], inputs: {...S.inputs}, models: [...S.models],
   atomic: $('#atomic').checked, provider: ($('#provider').value || '').trim() || null,
+  sweep: [...S.varying].sort(),
 })
 const drifted = () => !!S.stackName && JSON.stringify(spec()) !== JSON.stringify(S.saved)
 
@@ -243,6 +246,7 @@ async function applyStack(name, saved) {
   if (saved.models && saved.models.length) { S.models = [...saved.models]; persistModels(); renderModels() }
   if (saved.provider !== undefined && saved.provider !== null) $('#provider').value = saved.provider
   $('#atomic').checked = !!saved.atomic
+  S.varying = new Set(saved.sweep || [])
   persistInputs()
   S.stackName = name
   S.saved = spec()          // compared like-for-like, so loading a stack never reads as changed
@@ -416,7 +420,8 @@ async function check() {
     : (v.inputs_missing || []).length ? `fill in ${v.inputs_missing.join(', ')}`
     : !v.ok ? `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''} — see the Errors tab`
     : 'run the stack  (Ctrl+Enter)'
-  paint()   // what counts as bound, as an input, or as dangling depends on the stack order
+  renderModels()   // the run count depends on the inputs, which are only known once this returns
+  paint()          // what counts as bound, as an input, or as dangling depends on the stack order
 }
 
 const grow = t => { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px' }
@@ -432,15 +437,31 @@ function renderInputs(missing) {
     if (S.needs.length) {
       box.append(el('span', 'label', 'inputs'))
       for (const name of S.needs) {
-        const wrap = el('label', 'input')
+        const wrap = el('label', 'input' + (S.varying.has(name) ? ' varying' : ''))
         wrap.dataset.input = name
         wrap.append(el('span', 'nm', name))
         const ta = el('textarea')
         ta.rows = 1; ta.spellcheck = false; ta.value = S.inputs[name] || ''
-        ta.oninput = () => { S.inputs[name] = ta.value; grow(ta); persistInputs(); refresh() }
-        wrap.append(ta)
+        // Vary this input: one value per line, run once for each. Sixteen languages is a research
+        // question; retyping it sixteen times is why the question does not get asked.
+        const vary = el('button', 'vary')
+        vary.type = 'button'
+        vary.title = 'vary this input — one value per line, run once for each'
+        const mark = () => {
+          const n = split(S.inputs[name]).length
+          vary.textContent = S.varying.has(name) && n > 1 ? `⋮ ${n}` : '⋮'
+          vary.classList.toggle('on', S.varying.has(name))
+          wrap.classList.toggle('varying', S.varying.has(name))
+        }
+        vary.onclick = e => {
+          e.preventDefault()
+          S.varying.has(name) ? S.varying.delete(name) : S.varying.add(name)
+          mark(); persistInputs(); renderModels(); renderStack()
+        }
+        ta.oninput = () => { S.inputs[name] = ta.value; grow(ta); mark(); persistInputs(); renderModels(); refresh() }
+        wrap.append(ta, vary)
         box.append(wrap)
-        grow(ta)
+        grow(ta); mark()
       }
     }
   }
@@ -453,10 +474,30 @@ function renderInputs(missing) {
 // is the kind of friction that stops you trying one more model.
 const inputKey = () => `prowl.studio.inputs.${S.ws}`
 function persistInputs() {
-  try { localStorage.setItem(inputKey(), JSON.stringify(S.inputs)) } catch (e) { /* private mode */ }
+  try {
+    localStorage.setItem(inputKey(), JSON.stringify(S.inputs))
+    localStorage.setItem(inputKey() + '.varying', JSON.stringify([...S.varying]))
+  } catch (e) { /* private mode */ }
 }
 function restoreInputs() {
   try { S.inputs = JSON.parse(localStorage.getItem(inputKey()) || '{}') } catch (e) { S.inputs = {} }
+  try { S.varying = new Set(JSON.parse(localStorage.getItem(inputKey() + '.varying') || '[]')) }
+  catch (e) { S.varying = new Set() }
+}
+
+const split = v => (v || '').split('\n').map(s => s.trim()).filter(Boolean)
+
+// The cross product of every input marked to vary. This is the batch runner in miniature: a
+// benchmark is one stack, a list of inputs, and a repeat count.
+function combos() {
+  let out = [{}]
+  for (const name of S.varying) {
+    if (S.needs.length && !S.needs.includes(name)) continue   // left over from another stack
+    const vals = split(S.inputs[name])
+    if (vals.length < 2) continue          // one value is not a sweep, it is just the value
+    out = out.flatMap(c => vals.map(v => ({...c, [name]: v})))
+  }
+  return out
 }
 
 // ---------------------------------------------------------------- the pool
@@ -480,9 +521,10 @@ function renderModels() {
     chip.append(x)
     box.append(chip)
   }
-  // The button says how many generations pressing it starts: models × repeats, not models.
+  // The button says how many generations pressing it starts: inputs × repeats × models.
   const run = $('#run')
-  const total = Math.max(1, S.models.length) * (parseInt($('#repeats').value, 10) || 1)
+  const total = Math.max(1, S.models.length) * (parseInt($('#repeats').value, 10) || 1) *
+                Math.max(1, combos().length)
   run.textContent = total > 1 ? `▶ Run ×${total}` : '▶ Run'
 }
 
@@ -507,26 +549,33 @@ function newId() { return 'r' + Math.random().toString(36).slice(2, 10) }
 // One fill is an anecdote. Repeats are what turn a stack into a measurement, so the loop lives
 // next to the run button rather than in a script somebody has to write first.
 async function sweep() {
-  const n = Math.max(1, Math.min(200, parseInt($('#repeats').value, 10) || 1))
+  const reps = Math.max(1, Math.min(200, parseInt($('#repeats').value, 10) || 1))
+  const cs = combos()
   const pool = Math.max(1, S.models.length)
-  if (n * pool > 20) {
-    const worst = S.cap * n * pool
-    if (!confirm(`${n} runs × ${pool} model${pool > 1 ? 's' : ''} = ${n * pool} generations, ` +
-                 `up to ${worst.toLocaleString()} completion tokens. That is real money. Go ahead?`)) return
+  const total = cs.length * reps * pool
+  if (total > 20) {
+    const worst = S.cap * total
+    if (!confirm(`${cs.length} input${cs.length > 1 ? 's' : ''} × ${reps} repeat${reps > 1 ? 's' : ''} ` +
+                 `× ${pool} model${pool > 1 ? 's' : ''} = ${total} generations, up to ` +
+                 `${worst.toLocaleString()} completion tokens. That is real money. Go ahead?`)) return
   }
-  S.sweep = {n, i: 0, stop: false}
-  for (let i = 0; i < n && !S.sweep.stop; i++) {
-    S.sweep.i = i + 1
-    // A sweep that keeps going after a failure spends the rest of the budget on the same error.
-    if (!await go()) break
+  S.sweep = {n: cs.length * reps, i: 0, stop: false}
+  for (const c of cs) {
+    for (let i = 0; i < reps; i++) {
+      S.sweep.i += 1
+      // A sweep that keeps going after a failure spends the rest of the budget on the same error.
+      if (!await go(c) || S.sweep.stop) { S.sweep.stop = true; break }
+    }
+    if (S.sweep.stop) break
   }
   S.sweep = null
   $('#stop').textContent = '■ Stop'
   await loadHistory()
 }
 
-async function go() {
+async function go(over) {
   const id = newId()
+  const inputs = {...S.inputs, ...(over || {})}   // one value out of a swept input's list
   const models = S.models.length ? S.models : [null]
   const multi = models.length > 1
   S.run = {id, models: Object.fromEntries(models.map(m => [key(m), {vars: {}, done: null}])), order: []}
@@ -544,7 +593,7 @@ async function go() {
   if (multi) renderCompare()
 
   const body = {
-    run_id: id, scripts: S.stack, inputs: S.inputs, atomic: $('#atomic').checked,
+    run_id: id, scripts: S.stack, inputs, atomic: $('#atomic').checked,
     models: S.models, extra: pinned(), stack_name: S.stackName,
   }
 
@@ -749,15 +798,27 @@ const num = x => Math.abs(x) >= 100 || Number.isInteger(x) ? x.toLocaleString(un
 async function loadHistory() {
   if (!S.ws || !S.stack.length) { S.hist = null; renderHistory(); return }
   S.histSig = sig()
-  try { S.hist = await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}&limit=400`) }
-  catch (e) { S.hist = null }
+  try {
+    S.hist = await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}` +
+                       `&by=${encodeURIComponent(S.by)}&limit=400`)
+  } catch (e) { S.hist = null }
   renderHistory()
   if (S.result) renderVariables(S.result)   // the past-values affordance lives on those rows
 }
 
-function samples(variable, model) {
+// Mirrors history.axis on the server, so a group in the table and the samples behind it are cut
+// the same way. Two rules that disagree here would show statistics for one set of values and the
+// list for another.
+function axisOf(r, by) {
+  if (by === 'none') return ''
+  if (by.startsWith('input:')) return (r.inputs || {})[by.slice(6)] || ''
+  return r[by] || ''
+}
+
+function samples(variable, group) {
   if (!S.hist) return []
-  return S.hist.records.filter(r => r.variable === variable && (!model || r.model === model))
+  return S.hist.records.filter(r => r.variable === variable &&
+    (group === 'all' || group === undefined || axisOf(r, S.by) === group))
 }
 
 function values(box, rows) {
@@ -770,6 +831,37 @@ function values(box, rows) {
     line.title = [r.model, r.provider, ...ins].filter(Boolean).join('\n')
     box.append(line)
   }
+}
+
+// A spread does not read as a spread in a table. Same numbers on one axis: where they actually
+// sit, and whether "mean 41.6" is a cluster or a compromise between 7 and 77.
+function strip(st, rows) {
+  const nums = rows.map(r => parseFloat(String(r.value).replace(/,/g, ''))).filter(Number.isFinite)
+  const n = st.numeric, sd = n.sd || 0
+  if (nums.length < 2) return el('div', 'hint', 'one value, nothing to plot')
+  const W = 420, H = 58, pad = 30, base = 40
+  const lo = Math.min(n.min, n.mean - sd), hi = Math.max(n.max, n.mean + sd)
+  const flat = hi - lo < 1e-12                    // every run answered the same number
+  const x = v => flat ? W / 2 : pad + (v - lo) / (hi - lo) * (W - pad * 2)
+  const stack = {}
+  let dots = ''
+  for (const v of nums) {
+    const px = Math.round(x(v))
+    const i = stack[px] = (stack[px] || 0) + 1    // equal values pile upward, so ties are visible
+    dots += `<circle cx="${px}" cy="${base - (i - 1) * 5.2}" r="2.6"/>`
+  }
+  const box = el('div', 'plot')
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img">` +
+    (sd ? `<rect class="sd" x="${x(n.mean - sd)}" y="10" width="${Math.max(1, x(n.mean + sd) - x(n.mean - sd))}" height="${base - 4}"/>` : '') +
+    `<line class="ax" x1="${pad}" y1="${base + 6}" x2="${W - pad}" y2="${base + 6}"/>` +
+    `<line class="mean" x1="${x(n.mean)}" y1="10" x2="${x(n.mean)}" y2="${base + 8}"/>` +
+    `<g class="dot">${dots}</g>` +
+    `<text class="lab" x="${pad}" y="${H - 2}" text-anchor="start">${num(n.min)}</text>` +
+    `<text class="lab" x="${W - pad}" y="${H - 2}" text-anchor="end">${num(n.max)}</text>` +
+    `<text class="lab" x="${x(n.mean)}" y="7" text-anchor="middle">${num(n.mean)}${sd ? ' ± ' + num(sd) : ''}</text>` +
+    `</svg>`
+  box.title = `${nums.length} values · mean ${n.mean} · sd ${sd} · range ${n.min} to ${n.max}`
+  return box
 }
 
 // Counting distinct strings answers "how many names". It cannot answer "how many answers", since
@@ -810,8 +902,23 @@ function renderHistory() {
   const runs = new Set(h.records.map(r => r.run)).size
   const head = el('div', 'hhead')
   head.append(el('span', null, `${runs} run${runs > 1 ? 's' : ''}`),
-              el('span', null, h.shown < h.total ? `last ${h.shown} of ${h.total} samples` : `${h.total} samples`),
-              el('span', 'dim', sig()))
+              el('span', null, h.shown < h.total ? `last ${h.shown} of ${h.total} samples` : `${h.total} samples`))
+
+  // The axis is the whole point. Across models asks whether these models differ; across an input
+  // asks whether the prompt survives that input. Same samples, different question.
+  const pick = el('select', 'axis')
+  const opts = [['model', 'across models'], ['provider', 'across providers'],
+                ['script', 'across scripts'], ['stack_name', 'across stacks'],
+                ['run', 'across runs'], ['none', 'pooled']]
+  for (const k of h.keys || []) opts.splice(1, 0, ['input:' + k, `across ${k}`])
+  for (const [v, label] of opts) {
+    const o = el('option', null, label); o.value = v
+    pick.append(o)
+  }
+  pick.value = h.by
+  pick.title = 'which axis to cut the samples along'
+  pick.onchange = () => { S.by = pick.value; localStorage.setItem('prowl.studio.by', S.by); loadHistory() }
+  head.append(pick, el('span', 'dim', sig()))
   const wipe = ghost('clear', `delete every recorded sample for ${sig()}`, async () => {
     if (!confirm(`Delete all ${h.total} recorded samples for ${sig()}?`)) return
     await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}`, {}, 'DELETE')
@@ -823,23 +930,38 @@ function renderHistory() {
 
   const t = el('table')
   const hdr = el('tr')
-  for (const c of ['variable', 'model', 'n', 'distinct', 'spread', 'most common']) hdr.append(el('th', null, c))
+  const axisName = h.by.startsWith('input:') ? h.by.slice(6) : h.by === 'none' ? 'all' : h.by
+  for (const c of ['variable', axisName, 'n', 'distinct', 'spread', 'most common']) hdr.append(el('th', null, c))
   t.append(hdr)
 
   let last = null
   for (const s of h.summary) {
     const st = s.stats
-    const tr = el('tr', 'clickable')
+    const tr = el('tr', 'clickable' + (s.pooled ? ' pooled' : ''))
     tr.append(el('td', 'name', s.variable === last ? '' : s.variable))
     last = s.variable
-    const m = el('td', 'val'); m.append(el('span', null, short(s.model)))
+    const m = el('td', 'val')
+    m.append(el('span', null, s.pooled ? `all ${s.pooled}` : (h.by === 'model' ? short(s.group) : s.group) || '—'))
     if (s.temp !== null && s.temp !== undefined) m.append(el('span', 'tag', 'T' + s.temp))
     tr.append(m)
-    tr.append(el('td', 'num', String(st.n)))
+    // A dropped sample must be visible. Silently narrowing what was averaged is the same failure
+    // as silently truncating what was captured.
+    const nc = el('td', 'num')
+    nc.append(el('span', null, String(st.n)))
+    if (s.dropped) {
+      nc.append(el('span', 'bad', ` −${s.dropped}`))
+      nc.title = `${s.dropped} truncated ${s.type} value${s.dropped > 1 ? 's' : ''} left out: the ` +
+                 `model never reached the stop, so that is prose, not an answer`
+    }
+    tr.append(nc)
 
-    const uq = el('td', 'num', `${st.unique_folded}`)
-    uq.title = st.unique === st.unique_folded ? 'distinct values, ignoring case and spacing'
-      : `${st.unique_folded} ignoring case and spacing, ${st.unique} exactly`
+    // The ratio, not just the count: 12 distinct of 12 and 12 of 400 are different findings.
+    const uq = el('td', 'num')
+    uq.append(el('span', null, `${st.unique_folded}`),
+              el('span', 'dim', ` ${(st.unique_folded / st.n * 100).toFixed(0)}%`))
+    uq.title = (st.unique === st.unique_folded ? 'distinct values, ignoring case and spacing'
+      : `${st.unique_folded} ignoring case and spacing, ${st.unique} exactly`) +
+      `\n${(st.unique_folded / st.n * 100).toFixed(1)}% of ${st.n} samples were new`
     tr.append(uq)
 
     const sp = el('td', 'num')
@@ -864,17 +986,21 @@ function renderHistory() {
 
     const det = el('tr', 'detail'); det.hidden = true
     const cell = el('td', 'vals'); cell.colSpan = 6
+    const rows = samples(s.variable, s.pooled ? 'all' : s.group)
+    if (st.numeric) cell.append(strip(st, rows))
     const bar = el('div', 'vbar')
     const embed = ghost('≈ group by meaning', 'embed the distinct values and cluster them — a fraction of a cent', async () => {
       embed.disabled = true; embed.textContent = 'embedding…'
       bar.querySelectorAll('.groups').forEach(n => n.remove())
-      try { renderGroups(bar, await api(`/w/${S.ws}/embed`, {stack: sig(), variable: s.variable, model: s.model || null})) }
-      catch (e) { renderGroups(bar, {error: e.message}) }
+      try {
+        renderGroups(bar, await api(`/w/${S.ws}/embed`, {stack: sig(), variable: s.variable,
+                                                        by: S.by, group: s.pooled ? 'all' : s.group}))
+      } catch (e) { renderGroups(bar, {error: e.message}) }
       embed.disabled = false; embed.textContent = '≈ group by meaning'
     })
     bar.append(embed)
     cell.append(bar)
-    values(cell, samples(s.variable, s.model))
+    values(cell, rows)
     det.append(cell)
     tr.onclick = () => { det.hidden = !det.hidden }
     tr.title = 'every recorded value for this variable'

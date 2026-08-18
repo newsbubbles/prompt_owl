@@ -22,7 +22,7 @@ from ..lib.error import APIError, GenerationError
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 
-app = FastAPI(title='prowl studio', version='0.2.0')
+app = FastAPI(title='Prompt Owl', version='0.2.0')
 
 
 @app.exception_handler(workspace.WorkspaceError)
@@ -56,13 +56,15 @@ class StackBody(BaseModel):
     models: List[str] = []
     atomic: bool = False
     provider: Optional[str] = None
+    sweep: List[str] = []      # inputs whose box holds one value per line, run one at a time
 
 
 class EmbedBody(BaseModel):
     stack: str
     variable: str
-    model: Optional[str] = None          # which generating model's values, not which embedder
-    embed_model: Optional[str] = None
+    by: str = 'model'                    # the axis the group came from, and which slice of it
+    group: Optional[str] = None          # None or 'all' means every recorded value
+    embed_model: Optional[str] = None    # the embedder, not the model whose values these are
     threshold: float = embed.THRESHOLD
 
 
@@ -226,13 +228,17 @@ def delete_stack(ws: str, name: str):
 
 
 @app.get('/api/w/{ws}/history')
-def get_history(ws: str, stack: str = '', model: str = '', variable: str = '', limit: int = 400):
-    """Every value this workspace has produced for a stack, plus what they look like together.
-    Summarised over exactly the rows returned, so the statistics always describe the visible
-    sample rather than a larger one the client cannot see."""
+def get_history(ws: str, stack: str = '', model: str = '', variable: str = '',
+                by: str = 'model', clean: bool = True, limit: int = 400):
+    """Every value this workspace has produced for a stack, plus what they look like together,
+    cut along whichever axis was asked for. Summarised over exactly the rows returned, so the
+    statistics always describe the visible sample rather than a larger one the client cannot see."""
     rows, total = history.read(ws, stack=stack or None, model=model or None,
                                variable=variable or None, limit=max(1, min(limit, 5000)))
-    return {'records': rows, 'summary': history.summarise(rows), 'shown': len(rows), 'total': total}
+    if by not in history.AXES and not by.startswith('input:'):
+        by = 'model'
+    return {'records': rows, 'summary': history.summarise(rows, by=by, clean=clean), 'by': by,
+            'clean': clean, 'keys': history.keys(rows), 'shown': len(rows), 'total': total}
 
 
 @app.delete('/api/w/{ws}/history')
@@ -245,8 +251,9 @@ def embed_variable(ws: str, body: EmbedBody):
     """Group one variable's recorded values by meaning rather than by string. Counting distinct
     strings answers "how many names"; it cannot answer "how many answers", because the same answer
     written twice is two strings. This spends money, so it is a button and not a page load."""
-    rows, _ = history.read(ws, stack=body.stack or None, model=body.model or None,
-                           variable=body.variable or None)
+    rows, _ = history.read(ws, stack=body.stack or None, variable=body.variable or None)
+    if body.group is not None and body.group != 'all':
+        rows = [r for r in rows if history.axis(r, body.by) == body.group]
     if not rows:
         return {'error': 'nothing recorded for that variable'}
     try:
@@ -468,7 +475,7 @@ def main():
     os.makedirs(workspace.root(), exist_ok=True)
     if a.host not in ('127.0.0.1', 'localhost', '::1'):
         log.warn(f"listening on {a.host}: this serves scripts that spend money and read files")
-    log.info(f"prowl studio http://{a.host}:{a.port}  workspaces {workspace.root()}")
+    log.info(f"Prompt Owl http://{a.host}:{a.port}  workspaces {workspace.root()}")
     if a.open:
         webbrowser.open(f"http://{a.host}:{a.port}")
     import uvicorn

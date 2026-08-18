@@ -32,9 +32,7 @@ header {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--panel);
 }
-#mark { display: block; flex: none; }
-h1 { margin: 0 6px 0 0; font-size: 15px; font-weight: 600; }
-h1 span { color: var(--dim); font-weight: 400; }
+#mark { display: block; flex: none; margin-right: 4px; }
 
 select, input, textarea, button { font-family: inherit; font-size: 13px; color: var(--ink); }
 /* deliberately not `header input`: that also matches the atomic checkbox and stretches it */
@@ -293,6 +291,14 @@ aside {
 /* still empty, and the stack cannot run without it */
 .inputs .input.missing textarea { border-color: color-mix(in oklab, var(--bad) 60%, var(--line)); }
 .inputs .input.missing .nm { color: var(--bad); }
+/* an input marked to vary holds a list, one value per line, and the stack runs once for each */
+.inputs .vary {
+  align-self: flex-start; background: none; border: 1px solid var(--line); color: var(--dim);
+  border-radius: 5px; padding: 3px 5px; font: 10px var(--mono); line-height: 1.4;
+}
+.inputs .vary.on { color: var(--gen); border-color: var(--gen); }
+.inputs .input.varying textarea { border-color: color-mix(in oklab, var(--gen) 50%, var(--line)); }
+.inputs .input.varying .nm { color: var(--gen); }
 .forecast {
   display: flex; gap: 16px; padding: 7px 14px; border-top: 1px solid var(--line);
   background: var(--panel); font: 11.5px var(--mono); color: var(--dim);
@@ -359,6 +365,21 @@ tr.detail td { background: var(--sunk); padding: 6px 10px; }
 .vrow .when { flex: none; color: var(--dim); }
 .vrow .v { word-break: break-word; white-space: pre-wrap; }
 .vrow .tag { margin: 0; }
+.hhead .axis {
+  background: var(--sunk); border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px 6px; font: 11px var(--mono); color: var(--ink);
+}
+tr.pooled td { background: color-mix(in oklab, var(--accent) 7%, transparent); }
+tr.pooled td.val span:first-child { color: var(--accent); }
+
+.plot { margin: 2px 0 6px; }
+.plot svg { width: 100%; max-width: 420px; height: auto; overflow: visible; }
+.plot .ax { stroke: var(--line); }
+.plot .sd { fill: color-mix(in oklab, var(--accent) 16%, transparent); }
+.plot .mean { stroke: var(--accent); }
+.plot .dot circle { fill: var(--gen); fill-opacity: .8; }
+.plot .lab { fill: var(--dim); font: 9px var(--mono); }
+
 .vbar { padding: 2px 0 6px; }
 .groups { margin: 6px 0 8px; border-left: 2px solid var(--type); padding-left: 8px; }
 .groups .hhead { margin: 0 0 4px; }
