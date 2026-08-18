@@ -15,10 +15,10 @@
     <input id="model" placeholder="search models…" spellcheck="false" autocomplete="off">
     <div id="picker" class="picker" hidden></div>
   </div>
-  <input id="provider" placeholder="pin provider" spellcheck="false" title="Pin one backend, e.g. DeepInfra. One model id is served by several backends at different quantization, and they do not answer the same way — leave this empty and a comparison measures routing.">
+  <input id="provider" placeholder="pin provider" spellcheck="false" title="Pin one backend, e.g. DeepInfra. One model id is served by several backends at different quantization, and they do not answer the same way. Leave this empty and a comparison measures routing.">
   <div id="models" class="models"></div>
   <label class="check"><input type="checkbox" id="atomic"> atomic</label>
-  <label class="check" title="Talk to /v1/chat/completions instead of /v1/completions. The growing document goes into a pre-started assistant turn and the model carries on writing it — same mechanism, different envelope. Costs 19–91% more tokens, because the user turn is re-sent on every declaration."><input type="checkbox" id="chat"> chat</label>
+  <label class="check" title="Talk to /v1/chat/completions instead of /v1/completions. The growing document goes into a pre-started assistant turn and the model carries on writing it. Same mechanism, different envelope. Costs 19-91% more tokens, because the user turn is re-sent on every declaration."><input type="checkbox" id="chat"> chat</label>
   <label class="check" title="Run the stack this many times. One fill is an anecdote; a distribution needs repeats, and every value is kept in History."><span>×</span><input type="number" id="repeats" min="1" max="200" step="1" value="1"></label>
   <button id="run" class="go">▶ Run</button>
   <button id="stop" class="go stop" hidden>■ Stop</button>

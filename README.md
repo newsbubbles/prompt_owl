@@ -6,8 +6,8 @@ A declarative prompting language. A `.prowl` script is **one growing prompt stri
 interpreter walks it left to right, and every `{name(max_tokens, temperature)}` it reaches becomes
 a completion call on everything written so far, spliced back in before the walk continues.
 
-A finished run is a single continuous token sequence whose spans happen to be named. Every idea
-below follows from that one fact.
+A finished run is a single continuous token sequence whose spans happen to be named. Everything
+below follows from that.
 
 ```prowl
 # Character
@@ -50,7 +50,7 @@ Set up an environment file for your OpenAI-compatible endpoint. A copy lives in
 PROWL_VLLM_ENDPOINT=http://localhost:8000
 PROWL_MODEL=mistralai/Mistral-7B-Instruct-v0.2
 
-# paid APIs — OpenRouter, OpenAI, anything speaking the same shape
+# paid APIs: OpenRouter, OpenAI, anything speaking the same shape
 # PROWL_VENDOR_API_KEY=...
 
 # optional
@@ -64,15 +64,15 @@ PROWL_COMFY_ENDPOINT=127.0.0.1:8188
 ### Pointing it at a backend
 
 Prowl wants `/v1/completions`, because prefix continuation is what the language *is*. The base URL
-is the origin — prowl appends the path.
+is the origin, and prowl appends the path.
 
 | backend | `PROWL_VLLM_ENDPOINT` | notes |
 |---|---|---|
 | vLLM | `http://localhost:8000` | the reference setup |
-| Ollama | `http://localhost:11434` | its **OpenAI-compatible** paths. Not `/api/generate` — that shape returns `response`, not `choices[].text` |
+| Ollama | `http://localhost:11434` | its **OpenAI-compatible** paths. Not `/api/generate`, whose shape returns `response` instead of `choices[].text` |
 | llama.cpp server | `http://localhost:8080` | |
 | OpenRouter | `https://openrouter.ai/api` | needs a key. 284 of 414 models support `stop`, and a model without it cannot run a script correctly |
-| chat-only endpoints | as above | set `PROWL_CHAT=1`. The document goes into a pre-started assistant turn and the model carries on writing it — same mechanism, different envelope |
+| chat-only endpoints | as above | set `PROWL_CHAT=1`. The document goes into a pre-started assistant turn and the model carries on writing it. Same mechanism, different envelope |
 
 Unsure whether yours works? Start the studio and click the pill, or `curl localhost:8788/api/probe`.
 It sends one token down each path and tells you what answered.
@@ -125,8 +125,8 @@ gaps, not because it was told to.
 ### Declarations and references
 
 ```
-{name(max_tokens, temperature)}    DECLARATION — calls the model, splices the result, stores it
-{name}                             REFERENCE   — splices a stored value, calls nothing
+{name(max_tokens, temperature)}    DECLARATION: calls the model, splices the result, stores it
+{name}                             REFERENCE:   splices a stored value, calls nothing
 ```
 
 **The parentheses are what declares. Nothing else does.**
@@ -167,7 +167,7 @@ $\boxed{"` and the budget runs out before the value. `{answer:number}` reads the
 lands and *raises* if there isn't one.
 
 **A type annotates a declaration; it never makes one.** `{answer:number}` with no arguments raises
-`ValidationError` 1009 — a reference already has its value, so there is nothing left to shape.
+`ValidationError` 1009. A reference already has its value, so there is nothing left to shape.
 
 ### Options
 
@@ -176,7 +176,7 @@ and defaults to `0.0`.
 
 ```prowl
 {label(12)}                              temperature defaults to 0.0
-{code(600, 0.1, stop=```)}               its own stop — blank lines become legal here
+{code(600, 0.1, stop=```)}               its own stop, so blank lines are legal
 {cause(200, 0.7, n=3)}                   alternatives land in var.data['candidates']
 {plan(400, 0.2, model=qwen/qwen3-32b)}   per-variable model
 {story(1024, 0.8, block)}                force multiline whatever the whitespace says
@@ -184,7 +184,7 @@ and defaults to `0.0`.
 ```
 
 Known options are exactly `stop`, `n`, `logprobs`, `model`, `block`, `inline`. Anything else raises
-rather than being forwarded — options become request parameters, and a typo that reaches the API
+rather than being forwarded. Options become request parameters, and a typo that reaches the API
 does nothing visible while quietly disabling the thing you meant.
 
 The argument list must **start with an integer** to count as a declaration. That is what keeps
@@ -195,9 +195,9 @@ document prowl to the model without generating into itself.
 
 Decided by whitespace, from the character before `{` and the two after `}`:
 
-- **multiline** — the variable is alone on its line *and* followed by a blank line. Full token
+- **multiline**: the variable is alone on its line *and* followed by a blank line. Full token
   budget, keeps newlines, auto-extracts lists.
-- **inline** — anything else. Stripped and truncated at the first newline.
+- **inline**: anything else. Stripped and truncated at the first newline.
 
 ```prowl
 - Name: {story_name(24, 0.7)}          <- inline, one short phrase
@@ -249,7 +249,7 @@ If that answer might have been wrong, write the correct one:
 {answer:number(8, 0.0)}
 ```
 
-### `.prout` — the projection
+### `.prout`, the projection
 
 A `.prout` file beside `script.prowl` is an output template: references only, never declarations,
 never shown to the model during the run. After the script finishes, the stack fills it and returns
@@ -257,7 +257,7 @@ it from `result.out()`.
 
 This is the compression operator. A script can think in 1200 tokens and hand forward 700. Build
 long-running hierarchies by running stacks `atomic=True` and carrying `.prout` projections forward
-instead of raw completions — otherwise every stage inherits every token of every earlier stage.
+instead of raw completions. Otherwise every stage inherits every token of every earlier stage.
 
 ---
 
@@ -275,8 +275,8 @@ print(r.get())        # {var: value}
 print(r.out())        # joined .prout projections
 ```
 
-By default each script is appended to the previous completion — one continuous document across the
-whole stack. `atomic=True` runs each independently.
+By default each script is appended to the previous completion, making one continuous document
+across the whole stack. `atomic=True` runs each independently.
 
 `stack.validate()` runs before anything generates: every referenced variable is declared by an
 earlier script, required tools are loaded, referenced scripts exist. `stack.forecast()` reports
@@ -303,7 +303,7 @@ Compose a comma-delimited set of key phrases summarising the above:
 {@comfy(prompt)}
 ```
 
-Half the namespace is control flow — `@each` (for-each over a generated list), `@include` /
+Half the namespace is control flow: `@each` (for-each over a generated list), `@include` /
 `@script` (subroutine), `@out` (projection), `@list`, `@concat`, and `@prowl`, which generates a
 prowl script and runs it. The rest is I/O: `@file`, `@search`, `@recall`, `@collect`, `@navigate`,
 `@time`, `@comfy`.
@@ -322,24 +322,24 @@ run spends money and `@file` reads the filesystem.
 
 - **The stack is the unit.** Drag scripts into order; save that order, its inputs, its model pool
   and its provider pin as a named stack in the workspace.
-- **Syntax colouring compiled from prowl's own grammar** — `/api/lang` serves the interpreter's
+- **Syntax colouring compiled from prowl's own grammar.** `/api/lang` serves the interpreter's
   patterns, so the editor cannot disagree with what will actually run. Every declaration shows its
   shape, budget, temperature and stops.
 - **Run across a model pool concurrently** and compare **variable by variable**, because prompt rot
   is per-field: a prompt does not decay uniformly on a newer model, one named variable stops
   behaving.
 - **History.** Every filled declaration is appended to `runs/history.jsonl`. Cut the statistics
-  across models, providers, scripts, runs, or **any input** — distinct ratio, normalised entropy,
-  mean ± sd with a strip plot, and clustering by meaning through an embedding model when the values
-  are sentences.
+  across models, providers, scripts, runs, or **any input**. You get the distinct ratio, normalised
+  entropy, mean ± sd with a strip plot, and clustering by meaning through an embedding model when
+  the values are sentences.
 - **Sweeps.** Mark an input to vary and it becomes a list, one value per line; the runner walks
   inputs × repeats × models.
-- **Export** as `csv`, `jsonl`, `json`, or as training pairs (`messages`, `alpaca`) — because a run
-  is one token sequence whose spans are named, `completion[:start]` is exactly the prompt that
-  produced `completion[start:end]`, so one run yields one pair per declaration.
+- **Export** as `csv`, `jsonl`, `json`, or as training pairs (`messages`, `alpaca`). A run is one
+  token sequence whose spans are named, so `completion[:start]` is exactly the prompt that produced
+  `completion[start:end]`, and one run yields one pair per declaration.
 - **Model probing.** The catalogue says which models support `stop`; it cannot say which can
   continue a document. The studio spends five tokens and tells you: `continues`, `echoes` (a
-  chat-only model behind an adapter — tick `chat`), or `unsupported`. It also disables reasoning
+  chat-only model behind an adapter, so tick `chat`), or `unsupported`. It also disables reasoning
   automatically, since a thinking model spends a small budget entirely on thought and returns `""`.
 
 Everything the UI does it does over an HTTP API under `/api`, so a script or an agent can drive it
@@ -350,8 +350,8 @@ full surface.
 
 ## Skills for coding agents
 
-Two skills ship in [`skills/`](skills/) — one for writing `.prowl`, one for running the studio — so
-Claude Code, Codex and similar harnesses arrive knowing how this works:
+Two skills ship in [`skills/`](skills/), one for writing `.prowl` and one for running the studio,
+so Claude Code, Codex and similar harnesses arrive knowing how this works:
 
 ```bash
 mkdir -p .claude/skills && cp -r skills/* .claude/skills/
@@ -445,7 +445,7 @@ like a broken import.
 
 - **`max_tokens=1` is not usable.** A completion's first token is usually a leading space or
   punctuation, so one token rarely contains the value: `{d:number(1, 0.0)}` raises after its
-  retries and `{d(1, 0.0)}` returns whatever single token arrived. Give a type and give it room —
+  retries and `{d(1, 0.0)}` returns whatever single token arrived. Give a type and give it room:
   `{d:number(8, 0.0)}`. Since 0.2 this fails loudly instead of looping.
 - Bare `##` in the stop defaults ends a variable that legitimately contains `##` mid-line. Override
   with `stop=` on that declaration.

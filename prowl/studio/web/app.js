@@ -94,7 +94,7 @@ async function loadBrowser() {
     ul.append(li)
   }
   if (!d.scripts.length)
-    ul.append(el('li', 'muted', 'No .prowl files here yet — press + to make one.'))
+    ul.append(el('li', 'muted', 'No .prowl files here yet. Press + to make one.'))
   for (const [name, folders] of Object.entries(d.collisions || {}))
     ul.append(el('li', 'muted bad', `name collision: ${name} in ${folders.join(', ')}`))
   await loadStacks()
@@ -113,7 +113,7 @@ function act(glyph, title, fn) {
 function askName(what, current) {
   const n = (prompt(what, current || '') || '').trim()
   if (!n) return null
-  if (!NAME_OK.test(n)) { alert(`"${n}" is not a usable name — letters, digits, dot, dash and underscore only.`); return null }
+  if (!NAME_OK.test(n)) { alert(`"${n}" is not a usable name. Use letters, digits, dot, dash and underscore only.`); return null }
   return n
 }
 
@@ -152,7 +152,7 @@ function renderStack() {
     const chip = el('div', 'chip' + (name === S.open ? ' on' : '') + (S.dirty.has(name) ? ' dirty' : ''))
     chip.draggable = true
     chip.tabIndex = 0
-    chip.title = `${name} — position ${i + 1} of ${S.stack.length}\ndrag to reorder, or Alt+← / Alt+→\nDelete removes it from the stack`
+    chip.title = `${name}, position ${i + 1} of ${S.stack.length}\ndrag to reorder, or Alt+← / Alt+→\nDelete removes it from the stack`
     chip.append(el('span', 'ord', String(i + 1)), el('span', 'name', name))
     const drop = () => { S.stack.splice(i, 1); if (S.open === name) S.open = S.stack[0] || null; renderStack(); openScript(S.open) }
     const x = el('button', 'x', '×')
@@ -192,8 +192,8 @@ function renderStack() {
   const nm = el('span', 'sname' + (drift ? ' dirty' : '') + (S.stackName ? '' : ' none'),
                 S.stackName || 'untitled')
   nm.title = S.stackName
-    ? (drift ? `${S.stackName} — changed since it was saved` : `saved stack ${S.stackName}`)
-    : 'this stack has no name yet — saving asks for one'
+    ? (drift ? `${S.stackName}, changed since it was saved` : `saved stack ${S.stackName}`)
+    : 'this stack has no name yet, so saving asks for one'
   tools.append(nm, ghost('⌸ save', S.stackName ? `update ${S.stackName}` : 'name this stack and save it', saveStack))
   if (S.stackName) tools.append(ghost('save as…', 'save this order under a different name', () => saveStack(true)))
   box.append(tools)
@@ -369,8 +369,8 @@ function renderCaret() {
     const r = S.marks.refs.find(x => at >= x.start && at <= x.end)
     if (r) {
       bar.append(el('span', 'k', `{${r.name}}`))
-      bar.append(el('span', null, r.kind === 'p-ref' ? 'reference — splices a value declared earlier'
-        : r.kind === 'p-input' ? 'input — supplied by the caller'
+      bar.append(el('span', null, r.kind === 'p-ref' ? 'reference: splices a value declared earlier'
+        : r.kind === 'p-input' ? 'input: supplied by the caller'
         : 'nothing declares or supplies this; the literal text stays in the prompt'))
     } else {
       bar.append(el('span', null, `${S.marks.decls.length} declarations · ${S.marks.refs.length} references`))
@@ -381,7 +381,7 @@ function renderCaret() {
   if (d.type) bar.append(el('span', 't', ':' + d.type))
   bar.append(el('span', null, `${d.max} tokens`), el('span', null, `temp ${d.temp}`))
   bar.append(el('span', d.shape === 'block' ? 's' : null,
-    d.shape === 'block' ? 'block — keeps newlines, gets the full budget' : 'inline — cut at the first newline'))
+    d.shape === 'block' ? 'block: keeps newlines, gets the full budget' : 'inline: cut at the first newline'))
   bar.append(el('span', null, 'stops ' + d.stops.map(s => `"${S.marks.show(s)}"`).join(' ')))
 }
 
@@ -420,7 +420,7 @@ async function check() {
   // a disabled button with no explanation is a dead end; say which thing is in the way
   run.title = v.over_budget ? `worst case ${v.max_completion_tokens.toLocaleString()} tokens is over the ${v.budget.toLocaleString()} budget`
     : (v.inputs_missing || []).length ? `fill in ${v.inputs_missing.join(', ')}`
-    : !v.ok ? `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''} — see the Errors tab`
+    : !v.ok ? `${v.errors.length} problem${v.errors.length > 1 ? 's' : ''}; see the Errors tab`
     : 'run the stack  (Ctrl+Enter)'
   renderModels()   // the run count depends on the inputs, which are only known once this returns
   paint()          // what counts as bound, as an input, or as dangling depends on the stack order
@@ -448,7 +448,7 @@ function renderInputs(missing) {
         // question; retyping it sixteen times is why the question does not get asked.
         const vary = el('button', 'vary')
         vary.type = 'button'
-        vary.title = 'vary this input — one value per line, run once for each'
+        vary.title = 'vary this input: one value per line, run once for each'
         const mark = () => {
           const n = split(S.inputs[name]).length
           vary.textContent = S.varying.has(name) && n > 1 ? `⋮ ${n}` : '⋮'
@@ -513,8 +513,8 @@ function restoreModels() {
 
 // What a model does with a document, which the catalogue cannot tell you: `stop` support is
 // listed, prefix continuation is not. One five-token request, once, cached.
-const VERDICTS = {continues: ['✓', 'continues a document — runs prowl natively'],
-                  echoes: ['~', 'restates the prompt instead of continuing it — tick `chat`'],
+const VERDICTS = {continues: ['✓', 'continues a document, so it runs prowl natively'],
+                  echoes: ['~', 'restates the prompt instead of continuing it; tick `chat`'],
                   empty: ['!', 'returned nothing'],
                   unsupported: ['!', 'this endpoint refused it'],
                   unreachable: ['!', 'could not be reached'],
@@ -546,7 +546,7 @@ function renderModels() {
       mark.title = `${v.verdict}: ${why}` + (v.sample ? `\nanswered ${JSON.stringify(v.sample)}` : '')
       chip.append(mark)
     }
-    chip.title = m + (v ? `\n${v.verdict} — ${v.advice}` : '')
+    chip.title = m + (v ? `\n${v.verdict}: ${v.advice}` : '')
     const x = el('button', 'x', '×')
     x.type = 'button'; x.title = `remove ${m}`
     x.onclick = () => { S.models = S.models.filter(n => n !== m); persistModels(); renderModels(); refresh() }
@@ -685,7 +685,7 @@ const dollars = c => c >= 0.01 ? '$' + c.toFixed(4)
 function renderSpend() {
   const p = $('#status')
   if (S.noKey) {
-    p.textContent = 'no PROWL_VENDOR_API_KEY — runs will fail'
+    p.textContent = 'no PROWL_VENDOR_API_KEY, runs will fail'
     p.classList.add('bad')
     return
   }
@@ -814,7 +814,7 @@ function settle(d) {
   }
   pre.append(document.createTextNode(d.completion.slice(at)))
   doc.append(pre)
-  if (d.stopped) doc.append(el('div', 'hint bad', 'stopped early — the rest of the stack did not run'))
+  if (d.stopped) doc.append(el('div', 'hint bad', 'stopped early, the rest of the stack did not run'))
 
   renderVariables(d)
   renderRaw(d)
@@ -899,7 +899,7 @@ function strip(st, rows) {
 }
 
 // Counting distinct strings answers "how many names". It cannot answer "how many answers", since
-// the same answer written twice is two strings — so the values go through an embedding model and
+// the same answer written twice is two strings, so the values go through an embedding model and
 // come back grouped. Every count is shown with the threshold that produced it; without it a
 // cluster count is a number with a knob hidden behind it.
 function renderGroups(box, d) {
@@ -960,7 +960,7 @@ function renderHistory() {
   const clean = el('button', 'chip-toggle' + (S.clean ? ' on' : ''), 'drop truncated')
   clean.type = 'button'
   clean.style.marginLeft = '0'
-  clean.title = 'leave truncated word/line/number/bool values out of the statistics — they are ' +
+  clean.title = 'leave truncated word/line/number/bool values out of the statistics; they are ' +
                 'models that never reached the stop. Off shows every sample.'
   clean.onclick = () => { S.clean = !S.clean; loadHistory() }
   head.append(clean, el('span', 'dim', sig()))
@@ -1051,7 +1051,7 @@ function renderHistory() {
     const rows = samples(s.variable, s.pooled ? 'all' : s.group)
     if (st.numeric) cell.append(strip(st, rows))
     const bar = el('div', 'vbar')
-    const embed = ghost('≈ group by meaning', 'embed the distinct values and cluster them — a fraction of a cent', async () => {
+    const embed = ghost('≈ group by meaning', 'embed the distinct values and cluster them, for a fraction of a cent', async () => {
       embed.disabled = true; embed.textContent = 'embedding…'
       bar.querySelectorAll('.groups').forEach(n => n.remove())
       try {
@@ -1093,7 +1093,7 @@ function renderVariables(d) {
       values(list, past)
       const more = el('button', 'more', `▾ ${past.length}`)
       more.type = 'button'
-      more.title = `${past.length} recorded values for ${name} — click to show`
+      more.title = `${past.length} recorded values for ${name}, click to show`
       more.onclick = () => { list.hidden = !list.hidden }
       val.append(more, list)
     }
@@ -1174,7 +1174,7 @@ async function probe() {
   p.append(el('div', 'hint', d.completions && d.completions.ok
     ? 'Prowl uses completions. This endpoint is ready.'
     : d.chat && d.chat.ok
-      ? 'Completions did not answer but chat did — tick `chat` in the header to run by assistant prefill.'
+      ? 'Completions did not answer but chat did. Tick `chat` in the header to run by assistant prefill.'
       : 'Neither shape answered. Check PROWL_VLLM_ENDPOINT, the model id, and the key.'))
 }
 
@@ -1275,7 +1275,7 @@ function renderPicker(d, q) {
     if (m.logprobs) flags.append(el('span', 'tag', 'logp'))
     row.append(flags)
     row.title = `${m.name}\ncontext ${m.context}\nprompt ${money(m.prompt_price)} · completion ${money(m.completion_price)}` +
-      (m.reasoning ? '\nreasoning model — prowl disables thinking so a bounded declaration has room' : '')
+      (m.reasoning ? '\nreasoning model: prowl disables thinking so a bounded declaration has room' : '')
     row.onclick = () => { addModel(m.id); $('#model').value = ''; findModels() }
     p.append(row)
   }

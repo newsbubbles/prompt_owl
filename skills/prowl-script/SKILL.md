@@ -2,7 +2,7 @@
 name: prowl-script
 description: >
   Write, debug, or review `.prowl` scripts and `.prout` output templates for Prompt Owl
-  (github.com/lks-ai/prowl) — the declarative prefix-continuation prompting language where
+  (github.com/lks-ai/prowl), the declarative prefix-continuation prompting language where
   `{name(max_tokens, temperature)}` declares a generated variable and `{name}` references it.
   Use when the user asks to write a prowl script or prompt, convert a prompt or chain-of-thought
   into `.prowl`, build a ProwlStack, add a prowl tool, design `.prout` templates, or debug a
@@ -25,13 +25,13 @@ Everything below follows from that.
 Two forms, and the difference between them is the whole language.
 
 ```
-{name(max_tokens, temperature)}    DECLARATION — calls the LLM, splices the result, stores it
-{name}                             REFERENCE   — splices the stored value, calls nothing
+{name(max_tokens, temperature)}    DECLARATION: calls the LLM, splices the result, stores it
+{name}                             REFERENCE:   splices the stored value, calls nothing
 ```
 
 **The parentheses are what declares. Nothing else does.**
 
-### Why they are different — read this before writing anything
+### Why they are different, and read this before writing anything
 
 The script is one growing prompt string.
 
@@ -39,7 +39,7 @@ A **declaration** is the only thing that spends a token. It sends everything acc
 the prompt, takes the completion, and writes it into the document at that point.
 
 A **reference** spends nothing. It takes a value some earlier declaration already produced and
-drops it into the document *again*, further down — so that a **later** declaration is conditioned
+drops it into the document *again*, further down, so that a **later** declaration is conditioned
 on it. That is the entire mechanism by which one step of a chain can see the previous one, and it
 is what `.prout` templates are made of. A reference exists so a value can be *reused in the prompt
 later*, nothing else.
@@ -52,17 +52,17 @@ Consequences, all of which are the same fact:
 - **A type on a reference is meaningless**, and prowl raises `ValidationError` 1009 rather than
   guess what was meant. A type shapes a *generation*: it picks the stop sequence, decides how the
   raw completion is read, and decides what counts as a value at all. A reference already has its
-  value — there is nothing left to shape.
+  value, so there is nothing left to shape.
 
   So `{verdict:bool}` is **always** a mistake, and it is one of exactly two things:
 
   ```
-  {verdict:bool(8, 0.0)}   declare it — ask the model for a boolean here
-  {verdict}                reference it — splice the one declared earlier
+  {verdict:bool(8, 0.0)}   declare it: ask the model for a boolean here
+  {verdict}                reference it: splice the one declared earlier
   ```
 
 Variable names match `[a-zA-Z_0-9]+`. A colon introduces a type on a declaration and nothing else:
-no dots, no arrays, no namespacing. `{cause.hypothesis}` and `{items[0]}` are not prowl — they
+no dots, no arrays, no namespacing. `{cause.hypothesis}` and `{items[0]}` are not prowl. They
 parse as literal text and pass through untouched.
 
 Types, available since 0.2, always come with `(max_tokens, temperature)`:
@@ -85,14 +85,14 @@ Types, available since 0.2, always come with `(max_tokens, temperature)`:
 | `text` | next markdown header | the prose |
 | `list` | next markdown header | the text; invalid with no items |
 
-`max_tokens` stays a runaway guard — the type does the shaping, so the number is there to stop a
+`max_tokens` stays a runaway guard. The type does the shaping, so the number is there to stop a
 runaway, not to describe the value. But it still has to have room: a bounded type that runs out of
 budget comes back `truncated`, and for `number` the last-number-wins rule then reports a figure
 from the middle of an unfinished sentence. `{pick:number(4)}` truncated 15 of 37 samples into
 `1`, `-2` and `140`; `number(8)` on the same prompt truncated none.
 
 **`word` stops at a newline only, not at a space.** It used to stop at both, and a completion that
-opened with a space fired the stop at offset zero and came back empty every time — the value was
+opened with a space fired the stop at offset zero and came back empty every time. The value was
 never wrong, it never existed.
 
 **Prefer a type over a tight `max_tokens`.** `{answer(2, 0.0)}` was the old way of saying "this
@@ -100,7 +100,7 @@ is short," and it fails silently: modern models open with `"Let's denote"` or
 `"The final answer is: $\boxed{"` and the budget runs out before the value. `{answer:number}`
 reads the number wherever it lands and *raises* if there isn't one.
 
-`text` and `list` stop at the next header, **never at a blank line** — a blank line is inside
+`text` and `list` stop at the next header, **never at a blank line**, because a blank line is inside
 prose, not the end of it. Unknown types fail at validate time, before any generation.
 
 A declaration may also carry named options after the positional args, and `temperature`
@@ -108,7 +108,7 @@ is optional:
 
 ```
 {label(12)}                              temperature defaults to 0.0
-{code(600, 0.1, stop=```)}               its own stop — blank lines become legal here
+{code(600, 0.1, stop=```)}               its own stop, so blank lines are legal
 {cause(200, 0.7, n=3)}                   alternatives land in var.data['candidates']
 {plan(400, 0.2, model=qwen/qwen3-32b)}   per-variable model
 {story(1024, 0.8, block)}                force multiline whatever the whitespace says
@@ -116,7 +116,7 @@ is optional:
 ```
 
 Known options are exactly `stop`, `n`, `logprobs`, `model`, `block`, `inline`. **Anything else is
-an error, not a silent pass-through** — options become request parameters, and a typo that reaches
+an error, not a silent pass-through.** Options become request parameters, and a typo that reaches
 the API does nothing visible while quietly disabling the thing you meant.
 
 The arg list must still **start with an integer** to count as a declaration. That is what keeps
@@ -154,9 +154,9 @@ gaps, not because it was told to.
 
 `prowl.fill` reads the character before `{` and the two after `}`:
 
-- **Multiline** — the variable is alone on its line *and* followed by a blank line. Gets the full
+- **Multiline**: the variable is alone on its line *and* followed by a blank line. Gets the full
   token budget, keeps newlines, auto-extracts lists.
-- **Inline** — anything else. The value is stripped of ` .-_*>#`` ` and newlines, and a value
+- **Inline**: anything else. The value is stripped of ` .-_*>#`` ` and newlines, and a value
   containing a newline is truncated at the first one.
 
 ```prowl
@@ -172,14 +172,14 @@ truncates a 1024-token narrative to its first line.
 
 ## Stop tokens are why markdown structure works
 
-Default stops are `prowl.STOPS = ["\n\n", "\n#", "##"]` — one constant shared by `prowl.fill`,
+Default stops are `prowl.STOPS = ["\n\n", "\n#", "##"]`, one constant shared by `prowl.fill`,
 `ProwlStack` and the CLI. A generation ends at a blank line or at a markdown header. That means
 **headers are the control flow**: each `##` section is a natural bound on the variable inside it,
 and the model can't run past it into the next section.
 
 The bare `"##"` fires *anywhere in a line*, on purpose: models routinely run a header onto the
 current line (`"Since## Step 2"`), which `"\n#"` cannot catch. The cost is that a variable
-generating code, or prose that legitimately contains `##`, dies mid-line — override it per
+generating code, or prose that legitimately contains `##`, dies mid-line. Override it per
 declaration with `stop=` when that is what you are generating.
 
 (Before 0.2 there were three different defaults depending on the entry point. If you are on 0.1.x
@@ -191,7 +191,7 @@ paragraph break will end the variable early.
 
 ## Budgets and temperature carry meaning
 
-Both arguments are required on a declaration, and the numbers are part of the instruction — a
+Both arguments are required on a declaration, and the numbers are part of the instruction. A
 6-token budget tells the model this is a number, not an essay.
 
 | shape | tokens | temp |
@@ -211,7 +211,7 @@ creative prose). Deriving at high temperature is how scripts hallucinate.
 ## Lists are automatic
 
 If a multiline value contains lines matching `*`, `+`, `-`, or `1.`, they're parsed into
-`var.list` alongside the raw text. Nothing extra is needed — asking for a numbered list *is* the
+`var.list` alongside the raw text. Nothing extra is needed, since asking for a numbered list *is* the
 data extraction step. `{@list(var)}` then picks from it, and `{@each(var, script)}` runs a script
 per item.
 
@@ -243,7 +243,7 @@ If your answer might have been incorrect, write the correct answer:
 
 `{@each(var, script)}` also treats a variable's history as a list when it has no bullet list.
 
-## `.prout` — the projection
+## `.prout`, the projection
 
 A `.prout` file sitting next to `script.prowl` is an **output template**: references only, never
 declarations, never shown to the LLM during the run. After the script finishes, the stack fills it
@@ -256,7 +256,7 @@ tot.prout   ->  "# Considerations\n{crit_answers}"
 
 This is the compression operator. A script can think in 1200 tokens and hand forward 700. Build
 long-running hierarchies (worlds, books, multi-stage analysis) by running stacks `atomic=True` and
-carrying the `.prout` projections forward instead of the raw completions — otherwise every stage
+carrying the `.prout` projections forward instead of the raw completions. Otherwise every stage
 inherits every token of every earlier stage.
 
 ## Stacking
@@ -268,7 +268,7 @@ r.get()    # {var: value}
 r.out()    # joined .prout projections
 ```
 
-By default each script is appended to the previous completion — one continuous document across
+By default each script is appended to the previous completion, making one continuous document across
 the whole stack. `atomic=True` runs each independently.
 
 `stack.validate()` runs before anything generates: it checks that every referenced variable is
@@ -278,25 +278,25 @@ free.
 
 ## Gotchas
 
-- **`max_tokens=1` doesn't work.** Known bug — auto-continue guards on `> 1` and the single-line
+- **`max_tokens=1` doesn't work.** Auto-continue guards on `> 1` and the single-line
   cleanup can blank the value, which re-enters the retry loop forever. Use `2`. This is why every
   benchmark script says `{answer(2, 0.0)}`.
 - **A single-line value ending in `:` is discarded and retried.** The model was about to write a
   list. Either rephrase so a colon isn't natural, or make it multiline.
-- **Empty generations retry with rising temperature** — 4 attempts, temperature climbing toward
+- **Empty generations retry with rising temperature**: 4 attempts, temperature climbing toward
   1.0, then `ValueError: Cannot Generate Value`. If you see that error the problem is almost
   always the instruction above the blank, not the model.
 - **Everything before a variable is context, including other scripts in the stack.** Long stacks
   get expensive fast: the prompt is re-sent in full for every declaration. Count declarations, not
   scripts.
-- **`{@tool(...)}` calls are resolved when the walk reaches them** — they fire before the next
+- **`{@tool(...)}` calls are resolved when the walk reaches them**, firing before the next
   declaration, so a tool's output can condition the variable after it.
 
 ## Writing a new script
 
 1. Write the finished document with the blanks left blank. Headers first.
 2. Put an instruction line ending in `:` above each blank.
-3. Name each blank for what it *is*, not what it does — the name is read by humans in `r.get()`
+3. Name each blank for what it *is*, not what it does. The name is read by humans in `r.get()`
    and by `.prout`.
 4. Set budget from the shape, temperature from whether it's derived or invented.
 5. Blank line after every multiline variable.

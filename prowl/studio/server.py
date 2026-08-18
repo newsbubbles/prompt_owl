@@ -247,7 +247,7 @@ def model_probe(id: str, chat: bool = False):
             'sample': (text or '')[:60], 'chat': chat,
             'advice': {
                 'continues': 'runs prowl natively',
-                'echoes': 'restates the prompt instead of continuing it — tick `chat` to use assistant prefill',
+                'echoes': 'restates the prompt instead of continuing it; tick `chat` to use assistant prefill',
                 'empty': 'returned nothing in five tokens' + (' (reasoning model)' if thinking else ''),
                 'unsupported': 'this endpoint refused the request',
                 'no-choice': 'answered without a choice',

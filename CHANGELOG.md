@@ -2,7 +2,7 @@
 
 ## 0.2.0 (unreleased)
 
-Not on PyPI yet — `pip install -e ".[studio]"` from a clone. The headline is that a declaration
+Not on PyPI yet. Use `pip install -e ".[studio]"` from a clone. The headline is that a declaration
 can say what kind of value it expects, and that there is now a studio for running a stack across
 several models and looking at what each variable actually does over many runs.
 
@@ -22,7 +22,7 @@ several models and looking at what each variable actually does over many runs.
   all**, so `max_tokens` goes back to being a runaway guard instead of doubling as a shape hint.
 
   **A type annotates a declaration; it never makes one.** The parentheses are what declares, as
-  they always have been — `{answer:number}` with no arguments raises `ValidationError` (1009),
+  they always have been. `{answer:number}` with no arguments raises `ValidationError` (1009),
   because a reference only splices a value that already exists and has nothing to type.
 
   | type | stops at | holds |
@@ -79,26 +79,26 @@ several models and looking at what each variable actually does over many runs.
   `chat=` on `ProwlStack.run`, or `PROWL_CHAT` in the environment.
 
   Measured on a capability ladder, four models, provider pinned: completions and chat prefill score
-  identically on three of four, and mistral-nemo drops exactly one rung — answering `'Your'` where
-  it should copy a word, the model replying *as a turn* instead of continuing. So the prefix
+  identically on three of four, and mistral-nemo drops exactly one rung, answering `'Your'` where
+  it should copy a word: the model replying *as a turn* instead of continuing. So the prefix
   mechanism survives on chat endpoints. What it costs is tokens: 19–91% more, because the user turn
   is re-sent on every declaration.
 
   This also makes otherwise-unusable models work. `gpt-4o-mini` restates the prompt verbatim on
-  `/v1/completions` — OpenRouter serves chat-only models there by adapting them, and the adapter
-  gives itself away — but continues correctly through prefill.
+  `/v1/completions`, because OpenRouter serves chat-only models there by adapting them and the
+  adapter gives itself away. Through prefill it continues correctly.
 
-- **`prowl studio`** — a local sandbox for writing, arranging, running and **measuring** stacks.
+- **`prowl studio`**, a local sandbox for writing, arranging, running and **measuring** stacks.
   `pip install prompt-owl[studio]`, then `prowl-studio`. Loopback only by default: a run spends
   money and `@file` reads the filesystem.
 
   A workspace is just a directory of `.prowl` and `.prout` files under `~/.prowl/workspaces`
   (`--root` to move it, subdirectories to partition). What you edit in the studio is a file the
-  CLI and the MCP server can also see — the sandbox is never a place where scripts live that
+  CLI and the MCP server can also see, so the sandbox is never a place where scripts live that
   prowl itself cannot reach.
 
-  `GET /api/lang` serves the interpreter's own constants — `PATTERN_FILL`, `PATTERN_CALL`,
-  `PATTERN_ARGS`, `PATTERN_LIST`, `PATTERN_MASK`, `TYPES`, `OPTIONS`, `STOPS` — so the editor's
+  `GET /api/lang` serves the interpreter's own constants (`PATTERN_FILL`, `PATTERN_CALL`,
+  `PATTERN_ARGS`, `PATTERN_LIST`, `PATTERN_MASK`, `TYPES`, `OPTIONS`, `STOPS`) so the editor's
   highlighter compiles prowl's grammar instead of carrying a copy of it. The patterns are valid
   JavaScript regex exactly as written; only the flags differ. A highlighter that disagrees with
   the interpreter is worse than none, because it paints inert prose as a live declaration.
@@ -107,15 +107,15 @@ several models and looking at what each variable actually does over many runs.
   `prowl/mcp.py` now imports it rather than keeping its own.
 
   A **stack** is a saved primitive, not a gesture: `stacks.json` beside the scripts holds the
-  order, its inputs, its model pool, `atomic`, `chat`, which inputs sweep, and the provider pin —
-  a saved comparison that does not record its backend is not reproducible.
+  order, its inputs, its model pool, `atomic`, `chat`, which inputs sweep, and the provider pin.
+  A saved comparison that does not record its backend is not reproducible.
 
 - **Run history.** Every filled declaration is appended to `runs/history.jsonl` in the workspace,
   with model, provider, script, type, temperature, tokens, truncation and the inputs that produced
   it. One fill is an anecdote; the properties worth knowing only exist across runs.
 
-  Statistics are cut along a chosen **axis** — models, providers, scripts, stacks, runs, or **any
-  input the samples carry** — plus a pooled row across all groups, because pooled and split answer
+  Statistics are cut along a chosen **axis**: models, providers, scripts, stacks, runs, or **any
+  input the samples carry**. There is also a pooled row across all groups, because pooled and split answer
   different questions. Three models each answering `7` every time is entropy 0.00 three times and
   0.00 pooled; three models each stuck on a *different* number is 0.00 three times and 1.58 pooled.
 
@@ -130,7 +130,7 @@ several models and looking at what each variable actually does over many runs.
 
 - **Clustering by meaning.** Counting distinct strings answers "how many names"; it cannot answer
   "how many answers", because the same answer written twice is two strings. Distinct values are
-  embedded and leader-clustered — against the leader, never a running mean, which drifts across the
+  embedded and leader-clustered against the leader, never against a running mean, which drifts across the
   space and swallows the corpus. 32 back-translations were 32 distinct strings (100%, no
   information) and 14 clusters, one holding 19; the 13 singletons were the actual failures.
 
@@ -145,17 +145,17 @@ several models and looking at what each variable actually does over many runs.
   `messages` (OpenAI fine-tuning) and `alpaca` shapes. The training formats exist because a run is
   one token sequence whose spans are named: `completion[:start]` is exactly the prompt that
   produced `completion[start:end]`, so one run yields **one pair per declaration**, and the prompt
-  is the real growing prompt with every earlier value spliced in — not a template with the inputs
+  is the real growing prompt with every earlier value spliced in, rather than a template with the inputs
   pasted back. Finished documents persist to `runs/documents.jsonl`.
 
 - **Model capability probing.** The catalogue lists `stop` support; it cannot say whether a model
   *continues a document*. `GET /api/model-probe` spends five tokens and classifies the answer as
-  `continues`, `echoes` (a chat-only model behind an adapter — use chat prefill), `empty`, or
+  `continues`, `echoes` (a chat-only model behind an adapter, so use chat prefill), `empty`, or
   `unsupported`. Models are probed when added to the pool and the chip is marked.
 
 - **Reasoning is disabled automatically.** Given `{answer:number(8)}` a thinking model spends all
   eight tokens on reasoning and returns `""` with `finish_reason: length`, which prowl reports as
-  "no number in the completion" — sending you to inspect a prompt that was fine. 171 of the 284
+  "no number in the completion", sending you to inspect a prompt that was fine. 171 of the 284
   stop-capable models on OpenRouter declare `reasoning`, so this is the common case, and prowl
   declarations are bounded by design. The studio sends `reasoning: {enabled: false}` unless the
   caller set it, and badges those models `think`.
@@ -164,7 +164,7 @@ several models and looking at what each variable actually does over many runs.
   what answered, so "is my Ollama / vLLM / OpenRouter set up right" is one request rather than a log
   hunt.
 
-- **Themes** — `owl`, `paper`, `ember`, `terminal`, `slate`. A theme is eleven CSS variables and
+- **Themes**: `owl`, `paper`, `ember`, `terminal`, `slate`. A theme is eleven CSS variables and
   nothing else; no rule in the stylesheet names a colour directly.
 
 - **Agent skills** in [`skills/`](skills/): `prowl-script` for writing the language, `prompt-owl`
@@ -175,7 +175,7 @@ several models and looking at what each variable actually does over many runs.
 - **Stream levels are cumulative.** `StreamLevel.covers()` orders them
   `none < script < variable < token`, so asking for tokens also delivers the settled variable and
   the finished script. They were exclusive, which meant a caller wanting live tokens *and* the
-  variable objects they resolve into — every UI — could have one or the other.
+  variable objects they resolve into, which is every UI, could have one or the other.
 
 - **Variables carry `span`**, the offsets where the value landed in the finished document. A run is
   one token sequence whose spans happen to be named; without offsets that is a claim rather than
@@ -184,7 +184,7 @@ several models and looking at what each variable actually does over many runs.
 
 - **`prowl.shape(template, start, end)`** returns `'block'` or `'inline'` for a declaration, using
   the three-character rule `fill` has always used inline. Named so that anything showing a script
-  to a human can show the shape too, and agree with `fill` when it does — a missing blank line
+  to a human can show the shape too, and agree with `fill` when it does. A missing blank line
   truncating a 1024-token narrative to one line is the most common prowl bug and it is invisible
   in the source.
 
@@ -196,7 +196,7 @@ several models and looking at what each variable actually does over many runs.
 
 - **The `word` type never produced a value.** Its stops were `['\n', ' ']`, and a completion opens
   with its own leading space, so the space stop fired at offset zero and the value came back empty
-  — every time, on every model. `{name:word(12, 0.7)}` after a label burned its retries and raised.
+  every time, on every model. `{name:word(12, 0.7)}` after a label burned its retries and raised.
   Measured directly: `stop=['\n',' ']` returns `''`, `stop=['\n']` returns `' \`component\`'`.
   `read()` already takes the first word, so the space stop was redundant as well as fatal.
 
@@ -205,7 +205,7 @@ several models and looking at what each variable actually does over many runs.
   while the type it was checking was wrong.
 
 - **An empty `.prowl` file made `ProwlStack` unconstructible.** `prowl.load` returns `""` for an
-  empty file, `""` is falsy, and `add_task` chained `load(x.prowl) or load(x.md)` — so an empty
+  empty file, `""` is falsy, and `add_task` chained `load(x.prowl) or load(x.md)`, so an empty
   script fell through to a `.md` that was not there, got registered with `code: None`, and the
   `inspect()` in `__init__` raised `TypeError` on it. Six scripts shipped in `prowl/prompts` are
   0 bytes, which is why `ProwlStack(folder='prowl/prompts/pov/')` did not work at all. `None` now
@@ -214,13 +214,13 @@ several models and looking at what each variable actually does over many runs.
 
 - **A stop firing on the first token left a variable permanently empty.** Some models open a
   completion with `\n`, which fires the `word`/`line`/`number` stop at offset zero and returns
-  nothing — indistinguishable from a model with nothing to say. An empty first result now retries
+  nothing, which is indistinguishable from a model with nothing to say. An empty first result now retries
   once with stops removed, and says so.
 
 - **`word` read punctuation as a value.** `' "Evelyn Deveraux"'` became `'"Evelyn'` and `' |'`
   became `'|'`. Words are stripped of surrounding quotes, brackets and punctuation now.
 
-- **The studio's syntax overlay drifted from the caret**, 0.47px per character — three characters
+- **The studio's syntax overlay drifted from the caret**, 0.47px per character, or three characters
   by column 40, resetting each line, which reads as a fixed offset rather than as drift. The
   stylesheet sets the font on the `<pre>`, and the text lives in a `<code>` inside it, where the
   browser's own stylesheet says `code { font-family: monospace }` and beats inheritance. The rule
@@ -228,13 +228,13 @@ several models and looking at what each variable actually does over many runs.
   it was set on both elements the rule named.
 
 - **Scripts are read as UTF-8.** `open(path, "r")` used the locale encoding, which is cp1252 on
-  Windows — so a script containing an em dash raised, was swallowed by the bare `except`, and
+  Windows, so a script containing an em dash raised, was swallowed by the bare `except`, and
   came back as `None`. Found while loading the library into a studio workspace.
 
 - **`validate()` and `forecast()` disagreed with `fill()` about ```prowl blocks.** `fill` masks
   those blocks so their braces are inert, but `inspect_vars` and `forecast` scanned the raw source.
-  A variable written inside a block therefore counted as *declared* without ever being declared —
-  so a stack referencing it validated clean and then failed at generation time — and `forecast`
+  A variable written inside a block therefore counted as *declared* without ever being declared,
+  so a stack referencing it validated clean and then failed at generation time, and `forecast`
   budgeted for a call that never happens. Both mask first now. Found by putting the studio's
   outline next to the stack's own report of the same file and noticing they named different
   variables.
@@ -250,7 +250,7 @@ several models and looking at what each variable actually does over many runs.
   first line. The mask is now the same length as what it replaces (braces neutralized in place),
   so offsets stay valid; `unmask_prowl_code_blocks` is gone.
 - **Streamed runs reported a fabricated token count.** The streaming path counted SSE *chunks* and
-  called them completion tokens, with `prompt_tokens` hard-coded to `0` — a run measured at 36
+  called them completion tokens, with `prompt_tokens` hard-coded to `0`. A run measured at 36
   tokens that really spent 40, and no prompt side at all, which is the expensive side. The vendor
   sends real usage on the final chunk and it was being dropped on the floor. It is now read, and
   streamed and non-streamed runs of the same template agree exactly.
@@ -279,7 +279,7 @@ several models and looking at what each variable actually does over many runs.
   temperature escalation climbing past 1.0. Retries are now bounded and the original exception is
   raised, instead of every failure being reported as `LLM CONNECTION ERROR`.
 - **Auth and credit failures now fail fast.** HTTP 401/402/403 raise `APIError` immediately rather
-  than being retried and then surfacing as `Cannot Generate Value` — a billing problem no longer
+  than being retried and then surfacing as `Cannot Generate Value`, so a billing problem no longer
   looks like a prompt problem.
 - **`except:` no longer swallows `KeyboardInterrupt`.**
 - OpenRouter SSE keepalive comments and the `[DONE]` sentinel no longer produce warning spam, and
