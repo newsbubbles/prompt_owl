@@ -89,6 +89,35 @@ serves the OpenAI shape works, and the base URL is the origin — prowl appends 
 `/v1/completions` and `/v1/chat/completions` and reports status, error and the text that came
 back, so a misconfiguration is one request rather than a log hunt. In the UI, click the spend pill.
 
+### Which models can actually do this
+
+The catalogue says which models support `stop`. It cannot say whether a model *continues a
+document*, and that is the thing prowl needs. **`GET /api/model-probe?id=…[&chat=1]`** sends five
+tokens and classifies the answer:
+
+| verdict | means |
+|---|---|
+| `continues` | answers `" Paris"` to `"The capital of France is"` — runs prowl natively |
+| `echoes` | answers `"The capital of France is"` — a chat-only model behind OpenRouter's completions adapter, restating rather than continuing. **Tick `chat`**: `gpt-4o-mini` goes `echoes` → `continues` that way |
+| `empty` | nothing in five tokens; usually reasoning (see below) |
+| `unsupported` | the endpoint refused, e.g. `gemini-2.0-flash-001` has no completions endpoint at all |
+
+The studio probes automatically when you add a model and marks the chip `✓` / `~` / `!`.
+
+### Reasoning models are the common footgun
+
+**171 of the 284 stop-capable models on OpenRouter declare `reasoning`.** Given
+`{answer:number(8)}`, such a model spends all eight tokens thinking and returns `""` with
+`finish_reason: "length"` — which prowl reports as *"no number in the completion"*, sending you to
+inspect a prompt that was fine.
+
+Prowl declarations are bounded by design, so **the studio sends `reasoning: {enabled: false}`
+automatically** for any model the catalogue marks as reasoning, unless the caller set `reasoning`
+in `extra`. `qwen3.5-35b-a3b` fails every bounded declaration without it and answers normally with
+it. The picker badges these `think`.
+
+Doing this outside the studio means putting `{"reasoning": {"enabled": false}}` in `extra` yourself.
+
 ## The API is the interface
 
 Prefer this over clicking. Everything is under `/api`, JSON in and out.
@@ -168,6 +197,10 @@ statistics** and reports how many under `dropped`. A truncated bounded value is 
 reached the stop — it wrote prose — and for `number` the last-number-wins rule then lifts a figure
 out of mid-sentence. `text` and `list` are never dropped.
 
+It is a judgement, not a fact: a cut value is sometimes right anyway (gpt-4o-mini answered `7` and
+kept talking past it). So it is a toggle in the History header, and the count left out is always
+shown as `−N` rather than quietly narrowing what was averaged.
+
 `POST /w/{ws}/embed` with `{stack, variable, by, group}` embeds the **distinct** values and leader-
 clusters them, returning `clusters`, `spread` (mean pairwise cosine distance), the groups and the
 cost. Use it when the values are sentences: 32 back-translations were 32 distinct strings (100%,
@@ -243,9 +276,9 @@ new Promise(r => setTimeout(() => r({
 - **An empty `.prowl` makes the whole stack unconstructible.** `load()` returns `""`, which is
   falsy, and the task ends up with `code: None`. Zero-byte scripts in a folder break every script
   in it.
-- **Reasoning models return empty content and bill the full budget.** A `{n:number(8)}` on a
-  thinking model fails as "no number in the completion". Send `reasoning: {enabled: false}` in
-  `extra`, or leave those models out of small-budget benches.
+- **Provider pinning is sticky and silent.** A pin left in the box from an earlier comparison
+  gives `HTTP 404` on the next model that backend does not serve. If a run 404s, check the pin
+  first.
 - **Temperature 0 is not deterministic.** Four pinned calls to one model gave three identical
   answers and one different, and the odd one flipped a pass/fail grade.
 - **Provider pinning and `json_schema` are mutually exclusive** — pinning to a backend that lacks

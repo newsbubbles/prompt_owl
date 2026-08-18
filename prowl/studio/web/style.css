@@ -141,6 +141,10 @@ button { cursor: pointer; }
   background: var(--sunk); border: 1px solid var(--line); border-radius: 999px;
   font: 11px var(--mono); color: var(--ink); white-space: nowrap;
 }
+.mchip .verdict { font-size: 10px; line-height: 1; cursor: help; }
+.mchip .verdict.ok { color: var(--ok); }
+.mchip .verdict.bad { color: var(--gen); }
+.tag.warn { color: var(--gen); border-color: color-mix(in oklab, var(--gen) 55%, transparent); }
 .mchip .x { background: none; border: 0; color: var(--dim); padding: 0 2px; font-size: 12px; line-height: 1; }
 .mchip .x:hover { color: var(--bad); }
 

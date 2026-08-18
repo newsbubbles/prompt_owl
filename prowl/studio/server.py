@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from . import core, embed, export, history, lang, workspace
 from ..lib.prowl import prowl
+from ..lib.vllm import PREFILL
 from ..lib.log import log
 from ..lib.error import APIError, GenerationError
 
@@ -130,6 +131,11 @@ def catalogue(force=False):
             'completion_price': float(pr.get('completion') or 0),
             # `stop` is the one that decides whether prowl works at all
             'stop': 'stop' in sp,
+            # 171 of the 284 models that support `stop` also declare `reasoning`, and a reasoning
+            # model spends a small budget entirely on thinking and returns an empty string with
+            # finish_reason "length". That is the single most common way a prowl declaration
+            # fails on a modern model, so it is worth a badge and a default.
+            'reasoning': 'reasoning' in sp,
             'structured': 'structured_outputs' in sp,
             'seed': 'seed' in sp,
             'logprobs': 'logprobs' in sp,
@@ -180,6 +186,72 @@ def model_endpoints(id: str):
         'completion_price': float((e.get('pricing') or {}).get('completion') or 0),
         'stop': 'stop' in (e.get('supported_parameters') or []),
     } for e in eps]}
+
+
+# Short, unambiguous, and its continuation is one token. A model that restates it instead of
+# continuing it is not doing prefix continuation, whatever the endpoint claims.
+PROBE = 'The capital of France is'
+
+
+def verdict(text, prompt=PROBE):
+    if text is None:
+        return 'no-choice'
+    t = text.strip()
+    if not t:
+        return 'empty'
+    # OpenRouter serves /v1/completions for chat-only models by adapting them, and the adapter
+    # gives itself away: the model restates the prompt rather than carrying on from it.
+    if prompt.strip().lower().startswith(t.lower()[:16]):
+        return 'echoes'
+    return 'continues'
+
+
+@app.get('/api/model-probe')
+def model_probe(id: str, chat: bool = False):
+    """Can this model actually continue a document. One five-token request, because the catalogue
+    cannot answer it: `stop` support is listed, prefix continuation is not."""
+    base = (os.getenv('PROWL_VLLM_ENDPOINT') or '').rstrip('/')
+    key = os.getenv('PROWL_VENDOR_API_KEY')
+    if not base:
+        return {'id': id, 'error': 'PROWL_VLLM_ENDPOINT is not set'}
+    thinking = any(m['id'] == id and m.get('reasoning') for m in catalogue())
+    payload = {'model': id, 'max_tokens': 5, 'temperature': 0.0}
+    if thinking:
+        payload['reasoning'] = {'enabled': False}
+    if chat:
+        url = f"{base}/v1/chat/completions"
+        # the same envelope a chat run uses, so the probe measures what a run would get
+        payload['messages'] = [{'role': 'user', 'content': PREFILL},
+                               {'role': 'assistant', 'content': PROBE}]
+    else:
+        url = f"{base}/v1/completions"
+        payload['prompt'] = PROBE
+    headers = {'content-type': 'application/json'}
+    if key:
+        headers['Authorization'] = f"Bearer {key}"
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=30)
+        d = r.json()
+    except Exception as e:
+        return {'id': id, 'ok': False, 'verdict': 'unreachable', 'error': f"{type(e).__name__}: {e}"}
+    choices = d.get('choices') or []
+    if not choices:
+        err = d.get('error')
+        return {'id': id, 'ok': False, 'verdict': 'unsupported', 'reasoning': thinking,
+                'status': r.status_code,
+                'error': (err.get('message') if isinstance(err, dict) else err) or r.text[:160]}
+    c = choices[0]
+    text = c.get('text') if not chat else ((c.get('message') or {}).get('content'))
+    v = verdict(text)
+    return {'id': id, 'ok': v == 'continues', 'verdict': v, 'reasoning': thinking,
+            'sample': (text or '')[:60], 'chat': chat,
+            'advice': {
+                'continues': 'runs prowl natively',
+                'echoes': 'restates the prompt instead of continuing it — tick `chat` to use assistant prefill',
+                'empty': 'returned nothing in five tokens' + (' (reasoning model)' if thinking else ''),
+                'unsupported': 'this endpoint refused the request',
+                'no-choice': 'answered without a choice',
+            }.get(v, '')}
 
 
 @app.get('/api/workspaces')
@@ -393,6 +465,19 @@ async def run(ws: str, body: RunBody):
     pin = (((body.extra or {}).get('provider') or {}).get('order') or [None])[0]
     sig, samples = history.signature(body.scripts), []
 
+    # A reasoning model given `{answer:number(8)}` spends all eight tokens thinking and returns
+    # "" with finish_reason "length" -- which prowl reports as "no number in the completion",
+    # sending you to look at a prompt that was fine. Prowl declarations are bounded by design, so
+    # thinking is turned off unless the caller asked for it. 171 of the 284 stop-capable models
+    # on OpenRouter declare it, so this is the common case, not an edge one.
+    thinkers = {m['id'] for m in catalogue() if m.get('reasoning')}
+
+    def request_extra(model):
+        e = dict(body.extra or {})
+        if model in thinkers and 'reasoning' not in e:
+            e['reasoning'] = {'enabled': False}
+        return e or None
+
     async def stop_event():
         return state['stop']
 
@@ -434,7 +519,7 @@ async def run(ws: str, body: RunBody):
     async def drive_one(model):
         try:
             r = await rig(model).run(body.scripts, inputs=inputs, atomic=body.atomic,
-                                     model=model, extra=body.extra, chat=body.chat,
+                                     model=model, extra=request_extra(model), chat=body.chat,
                                      continue_ratio=body.continue_ratio,
                                      stream_level=prowl.StreamLevel.TOKEN)
             done = r.to_dict()
@@ -520,6 +605,17 @@ def stop_run(run_id: str):
     # within one generation and the partial result still comes back on `done`.
     state['stop'] = True
     return {'ok': True}
+
+
+@app.middleware('http')
+async def revalidate(request: Request, call_next):
+    # The client is edited while it is open. A cached style.css against a fresh app.js is a theme
+    # picker that changes nothing and a bug report about a feature that works -- no-cache still
+    # allows 304s, so this costs a conditional request and nothing else.
+    r = await call_next(request)
+    if not request.url.path.startswith('/api'):
+        r.headers['Cache-Control'] = 'no-cache'
+    return r
 
 
 # Mounted last: a mount at / matches anything the API routes above did not.

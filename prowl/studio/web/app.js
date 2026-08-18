@@ -12,7 +12,7 @@ const S = {
   dirty: new Set(), inputs: {}, needs: [], run: null, result: null, marks: null,
   // the stack under composition: its saved name, the spec it was saved as, its recorded past
   stackName: null, saved: null, hist: null, histSig: null, sweep: null, cap: 0,
-  by: 'model', varying: new Set(),
+  by: 'model', varying: new Set(), clean: true,
 }
 
 async function api(path, body, method) {
@@ -511,12 +511,42 @@ function restoreModels() {
   try { S.models = JSON.parse(localStorage.getItem('prowl.studio.models') || '[]') } catch (e) { S.models = [] }
 }
 
+// What a model does with a document, which the catalogue cannot tell you: `stop` support is
+// listed, prefix continuation is not. One five-token request, once, cached.
+const VERDICTS = {continues: ['✓', 'continues a document — runs prowl natively'],
+                  echoes: ['~', 'restates the prompt instead of continuing it — tick `chat`'],
+                  empty: ['!', 'returned nothing'],
+                  unsupported: ['!', 'this endpoint refused it'],
+                  unreachable: ['!', 'could not be reached'],
+                  'no-choice': ['!', 'answered without a choice']}
+
+function verdicts() { try { return JSON.parse(localStorage.getItem('prowl.studio.verdicts') || '{}') } catch (e) { return {} } }
+
+async function checkModel(id) {
+  const all = verdicts()
+  if (all[id]) return all[id]
+  let d
+  try { d = await api(`/model-probe?id=${encodeURIComponent(id)}`) } catch (e) { return null }
+  all[id] = {verdict: d.verdict, advice: d.advice, reasoning: d.reasoning, sample: d.sample}
+  try { localStorage.setItem('prowl.studio.verdicts', JSON.stringify(all)) } catch (e) {}
+  renderModels()
+  return all[id]
+}
+
 function renderModels() {
   const box = $('#models'); box.replaceChildren()
+  const known = verdicts()
   for (const m of S.models) {
     const chip = el('span', 'mchip')
     chip.append(el('span', null, short(m)))
-    chip.title = m
+    const v = known[m]
+    if (v) {
+      const [glyph, why] = VERDICTS[v.verdict] || ['?', v.verdict]
+      const mark = el('span', 'verdict ' + (v.verdict === 'continues' ? 'ok' : 'bad'), glyph)
+      mark.title = `${v.verdict}: ${why}` + (v.sample ? `\nanswered ${JSON.stringify(v.sample)}` : '')
+      chip.append(mark)
+    }
+    chip.title = m + (v ? `\n${v.verdict} — ${v.advice}` : '')
     const x = el('button', 'x', '×')
     x.type = 'button'; x.title = `remove ${m}`
     x.onclick = () => { S.models = S.models.filter(n => n !== m); persistModels(); renderModels(); refresh() }
@@ -534,6 +564,7 @@ function addModel(id) {
   id = (id || '').trim()
   if (!id || S.models.includes(id)) return
   S.models.push(id); persistModels(); renderModels(); refresh()
+  checkModel(id)   // find out now, not from a failed sweep an hour later
 }
 
 // One model id is served by several backends at different quantization, and they do not answer the
@@ -803,7 +834,7 @@ async function loadHistory() {
   S.histSig = sig()
   try {
     S.hist = await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}` +
-                       `&by=${encodeURIComponent(S.by)}&limit=400`)
+                       `&by=${encodeURIComponent(S.by)}&clean=${S.clean ? 1 : 0}&limit=400`)
   } catch (e) { S.hist = null }
   renderHistory()
   if (S.result) renderVariables(S.result)   // the past-values affordance lives on those rows
@@ -921,7 +952,18 @@ function renderHistory() {
   pick.value = h.by
   pick.title = 'which axis to cut the samples along'
   pick.onchange = () => { S.by = pick.value; localStorage.setItem('prowl.studio.by', S.by); loadHistory() }
-  head.append(pick, el('span', 'dim', sig()))
+  head.append(pick)
+
+  // Excluding truncated bounded values is a judgement, and a judgement the tool makes silently is
+  // one nobody can check. Sometimes the cut value is right anyway -- gpt-4o-mini answered `7` and
+  // kept talking past it.
+  const clean = el('button', 'chip-toggle' + (S.clean ? ' on' : ''), 'drop truncated')
+  clean.type = 'button'
+  clean.style.marginLeft = '0'
+  clean.title = 'leave truncated word/line/number/bool values out of the statistics — they are ' +
+                'models that never reached the stop. Off shows every sample.'
+  clean.onclick = () => { S.clean = !S.clean; loadHistory() }
+  head.append(clean, el('span', 'dim', sig()))
   // A log is where measurements go to die. csv opens in a spreadsheet, jsonl is the native
   // record, and messages/alpaca are the finished documents cut at the spans into one training
   // pair per declaration -- prompt is the real growing prompt, not a template.
@@ -1224,11 +1266,16 @@ function renderPicker(d, q) {
     row.append(el('span', 'ppr', money(m.completion_price)))
     row.append(el('span', 'pctx', m.context ? (m.context / 1000).toFixed(0) + 'k' : ''))
     const flags = el('span', 'pflags')
+    // `think` first: a reasoning model spends a small budget entirely on thinking and returns an
+    // empty string, which is the most common way a declaration fails on a modern model. Prowl
+    // turns reasoning off for these automatically, but you should still know which they are.
+    if (m.reasoning) flags.append(el('span', 'tag warn', 'think'))
     if (m.structured) flags.append(el('span', 'tag', 'json'))
     if (m.seed) flags.append(el('span', 'tag', 'seed'))
     if (m.logprobs) flags.append(el('span', 'tag', 'logp'))
     row.append(flags)
-    row.title = `${m.name}\ncontext ${m.context}\nprompt ${money(m.prompt_price)} · completion ${money(m.completion_price)}`
+    row.title = `${m.name}\ncontext ${m.context}\nprompt ${money(m.prompt_price)} · completion ${money(m.completion_price)}` +
+      (m.reasoning ? '\nreasoning model — prowl disables thinking so a bounded declaration has room' : '')
     row.onclick = () => { addModel(m.id); $('#model').value = ''; findModels() }
     p.append(row)
   }
