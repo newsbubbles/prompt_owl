@@ -10,6 +10,8 @@ const el = (t, c, x) => { const n = document.createElement(t); if (c) n.classNam
 const S = {
   lang: null, ws: null, browser: [], stack: [], open: null, tools: [], models: [],
   dirty: new Set(), inputs: {}, needs: [], run: null, result: null, marks: null,
+  // the stack under composition: its saved name, the spec it was saved as, its recorded past
+  stackName: null, saved: null, hist: null, histSig: null, sweep: null, cap: 0,
 }
 
 async function api(path, body, method) {
@@ -180,61 +182,102 @@ function renderStack() {
     }
     box.append(chip)
   })
-  const save = el('button', 'ghost wide save', '⌸ save stack')
-  save.type = 'button'
-  save.title = 'save this order, its inputs and its model pool under a name'
-  save.onclick = saveStack
-  box.append(save)
+  // Which stack this is, and whether it still matches the one on disk. Without a name the save
+  // button can only ever mean "save as", which is what made it look like there was one stack.
+  const tools = el('div', 'stack-tools')
+  const drift = drifted()
+  const nm = el('span', 'sname' + (drift ? ' dirty' : '') + (S.stackName ? '' : ' none'),
+                S.stackName || 'untitled')
+  nm.title = S.stackName
+    ? (drift ? `${S.stackName} — changed since it was saved` : `saved stack ${S.stackName}`)
+    : 'this stack has no name yet — saving asks for one'
+  tools.append(nm, ghost('⌸ save', S.stackName ? `update ${S.stackName}` : 'name this stack and save it', saveStack))
+  if (S.stackName) tools.append(ghost('save as…', 'save this order under a different name', () => saveStack(true)))
+  box.append(tools)
   refresh()
 }
 
 // ---------------------------------------------------------------- saved stacks
 
+function ghost(text, title, fn) {
+  const b = el('button', 'ghost wide', text)
+  b.type = 'button'; b.title = title; b.onclick = fn
+  return b
+}
+
+// Everything that makes a run reproducible. The provider is part of it: the same model id on two
+// backends is two quantizations, so a saved comparison that forgets it is not saved.
+const spec = () => ({
+  scripts: [...S.stack], inputs: {...S.inputs}, models: [...S.models],
+  atomic: $('#atomic').checked, provider: ($('#provider').value || '').trim() || null,
+})
+const drifted = () => !!S.stackName && JSON.stringify(spec()) !== JSON.stringify(S.saved)
+
 async function loadStacks() {
   const d = await api(`/w/${S.ws}/stacks`)
   const names = Object.keys(d.stacks || {}).sort()
-  $('#stacks-head').hidden = !names.length
   const ul = $('#stacks'); ul.replaceChildren()
   for (const name of names) {
-    const spec = d.stacks[name]
+    const saved = d.stacks[name]
     const li = el('li', 'entry')
-    const b = el('button', 'row')
+    const b = el('button', 'row' + (name === S.stackName ? ' in' : ''))
     b.type = 'button'
-    b.title = `${spec.scripts.join(' → ')}${spec.models && spec.models.length ? '\n' + spec.models.join(', ') : ''}`
-    b.append(el('span', 'name', name), el('span', 'sub', `${spec.scripts.length}`))
-    b.onclick = () => applyStack(spec)
+    b.title = `${saved.scripts.join(' → ')}${saved.models && saved.models.length ? '\n' + saved.models.join(', ') : ''}`
+    b.append(el('span', 'name', name), el('span', 'sub', `${saved.scripts.length}`))
+    b.onclick = () => applyStack(name, saved)
     li.append(b, act('×', `delete stack ${name}`, async () => {
       if (!confirm(`Delete stack ${name}?`)) return
       await api(`/w/${S.ws}/stacks/${name}`, {}, 'DELETE')
-      await loadStacks()
+      if (S.stackName === name) { S.stackName = null; S.saved = null }
+      await loadStacks(); renderStack()
     }))
     ul.append(li)
   }
+  if (!names.length)
+    ul.append(el('li', 'muted', 'Compose an order and press save to keep it.'))
 }
 
-async function applyStack(spec) {
-  S.stack = [...spec.scripts]
-  S.inputs = {...S.inputs, ...(spec.inputs || {})}
-  if (spec.models && spec.models.length) { S.models = [...spec.models]; persistModels(); renderModels() }
-  if (spec.provider !== undefined && spec.provider !== null) $('#provider').value = spec.provider
-  $('#atomic').checked = !!spec.atomic
+async function applyStack(name, saved) {
+  S.stack = [...saved.scripts]
+  S.inputs = {...S.inputs, ...(saved.inputs || {})}
+  if (saved.models && saved.models.length) { S.models = [...saved.models]; persistModels(); renderModels() }
+  if (saved.provider !== undefined && saved.provider !== null) $('#provider').value = saved.provider
+  $('#atomic').checked = !!saved.atomic
   persistInputs()
+  S.stackName = name
+  S.saved = spec()          // compared like-for-like, so loading a stack never reads as changed
   S.open = S.stack[0] || null
   await loadBrowser()
   await openScript(S.open)
 }
 
-async function saveStack() {
+// A named stack saves over itself; an unnamed one asks. `save as…` is the third case, and it is
+// the one that was missing: composing a variant of a loaded stack and keeping both.
+async function saveStack(asNew) {
+  asNew = asNew === true
   if (!S.stack.length) return
-  const name = askName('save this stack as', S.stack.join('-').slice(0, 40))
-  if (!name) return
+  let name = S.stackName
+  if (!name || asNew) {
+    name = askName(asNew ? `save this order as a new stack called` : 'save this stack as',
+                   asNew ? '' : S.stack.join('-').slice(0, 40))
+    if (!name) return
+  }
+  const body = spec()
   try {
-    await api(`/w/${S.ws}/stacks/${name}`, {
-      scripts: S.stack, inputs: S.inputs, models: S.models,
-      atomic: $('#atomic').checked, provider: ($('#provider').value || '').trim() || null,
-    }, 'PUT')
+    await api(`/w/${S.ws}/stacks/${name}`, body, 'PUT')
+    S.stackName = name
+    S.saved = body
     await loadStacks()
+    renderStack()
   } catch (e) { alert(e.message) }
+}
+
+async function newStack() {
+  if (S.stack.length && !S.stackName &&
+      !confirm('Start a new stack? The order you have composed is not saved.')) return
+  S.stack = []; S.stackName = null; S.saved = null
+  await openScript(null)    // renders the stack too
+  await loadStacks()
 }
 
 async function openScript(name) {
@@ -354,7 +397,11 @@ async function check() {
   if (!S.ws || !S.stack.length) { S.needs = []; f.replaceChildren(); $('#inputs').replaceChildren(); return }
   const v = await api(`/w/${S.ws}/validate`, {scripts: S.stack, inputs: S.inputs})
   S.needs = v.inputs_required
+  S.cap = v.max_completion_tokens
   renderInputs(v.inputs_missing || [])
+  // Samples belong to the order that produced them, so changing the order retires the view of
+  // them. Fetched only while the pane is open: a keystroke should not cost a round trip.
+  if (S.histSig !== sig()) { S.histSig = sig(); S.hist = null; if (visible('history')) loadHistory() }
 
   f.replaceChildren()
   f.append(el('span', null, `${S.stack.length} scripts`))
@@ -433,8 +480,10 @@ function renderModels() {
     chip.append(x)
     box.append(chip)
   }
+  // The button says how many generations pressing it starts: models × repeats, not models.
   const run = $('#run')
-  run.textContent = S.models.length > 1 ? `▶ Run ×${S.models.length}` : '▶ Run'
+  const total = Math.max(1, S.models.length) * (parseInt($('#repeats').value, 10) || 1)
+  run.textContent = total > 1 ? `▶ Run ×${total}` : '▶ Run'
 }
 
 function addModel(id) {
@@ -455,13 +504,36 @@ function pinned() {
 
 function newId() { return 'r' + Math.random().toString(36).slice(2, 10) }
 
+// One fill is an anecdote. Repeats are what turn a stack into a measurement, so the loop lives
+// next to the run button rather than in a script somebody has to write first.
+async function sweep() {
+  const n = Math.max(1, Math.min(200, parseInt($('#repeats').value, 10) || 1))
+  const pool = Math.max(1, S.models.length)
+  if (n * pool > 20) {
+    const worst = S.cap * n * pool
+    if (!confirm(`${n} runs × ${pool} model${pool > 1 ? 's' : ''} = ${n * pool} generations, ` +
+                 `up to ${worst.toLocaleString()} completion tokens. That is real money. Go ahead?`)) return
+  }
+  S.sweep = {n, i: 0, stop: false}
+  for (let i = 0; i < n && !S.sweep.stop; i++) {
+    S.sweep.i = i + 1
+    // A sweep that keeps going after a failure spends the rest of the budget on the same error.
+    if (!await go()) break
+  }
+  S.sweep = null
+  $('#stop').textContent = '■ Stop'
+  await loadHistory()
+}
+
 async function go() {
   const id = newId()
   const models = S.models.length ? S.models : [null]
   const multi = models.length > 1
   S.run = {id, models: Object.fromEntries(models.map(m => [key(m), {vars: {}, done: null}])), order: []}
   S.result = null
+  let ok = false
   $('#run').hidden = true; $('#stop').hidden = false
+  $('#stop').textContent = S.sweep ? `■ Stop (${S.sweep.i}/${S.sweep.n})` : '■ Stop'
 
   // One model streams into the document; several stream into the grid, because four documents
   // side by side is four walls of text and the question is always "which variable differs".
@@ -473,7 +545,7 @@ async function go() {
 
   const body = {
     run_id: id, scripts: S.stack, inputs: S.inputs, atomic: $('#atomic').checked,
-    models: S.models, extra: pinned(),
+    models: S.models, extra: pinned(), stack_name: S.stackName,
   }
 
   try {
@@ -501,6 +573,7 @@ async function go() {
         showPane('errors')
       } else if (ev === 'done') {
         if (slot) slot.done = d
+        if (d.ok) ok = true
         bank(d.usage)
         if (multi) renderCompare()
         else { S.result = d; d.ok ? settle(d) : (showErrors(d.errors || [], d.failed_variable), showPane('errors')) }
@@ -514,7 +587,15 @@ async function go() {
   } finally {
     $('#run').hidden = false; $('#stop').hidden = true
   }
+  if (!S.sweep && visible('history')) await loadHistory()
+  return ok
 }
+
+// Six decimal places round a real charge to $0.000000, which reads as free. Below that it says
+// so instead.
+const dollars = c => c >= 0.01 ? '$' + c.toFixed(4)
+  : c >= 1e-6 ? '$' + c.toFixed(6)
+  : c > 0 ? '<$0.000001' : '$0'
 
 // What this session has actually spent. A static budget ceiling told you nothing you did not
 // already know; the running total is the number you check before starting a sweep.
@@ -527,22 +608,29 @@ function renderSpend() {
   }
   const s = S.spent
   p.classList.remove('bad')
-  if (!s.runs) { p.textContent = 'nothing spent yet'; return }
   const tok = s.prompt + s.completion
-  p.textContent = `${s.runs} run${s.runs > 1 ? 's' : ''} · ${tok.toLocaleString()} tok · ` +
-                  `$${s.cost.toFixed(6)} · ${s.elapsed.toFixed(1)}s`
+  if (!tok) { p.textContent = 'nothing spent yet'; return }
+  // Not every spend is a run: an embedding call costs money and is not one, so the runs clause
+  // drops out rather than reading "0 runs".
+  const bits = []
+  if (s.runs) bits.push(`${s.runs} run${s.runs > 1 ? 's' : ''}`)
+  bits.push(`${tok.toLocaleString()} tok`, dollars(s.cost))
+  if (s.elapsed) bits.push(`${s.elapsed.toFixed(1)}s`)
+  p.textContent = bits.join(' · ')
   p.title = `${s.prompt.toLocaleString()} prompt + ${s.completion.toLocaleString()} completion\n` +
             `budget per run ${S.budget.toLocaleString()} completion tokens`
 }
 
-function bank(usage) {
+// `runs` counts runs. An embedding call spends money without being one, so it banks its cost
+// with a count of zero rather than inflating the run tally.
+function bank(usage, runs = 1) {
   if (!usage) return
   const s = S.spent
   s.prompt += usage.prompt_tokens || 0
   s.completion += usage.completion_tokens || 0
   s.cost += usage.cost || 0
   s.elapsed += usage.elapsed || 0
-  s.runs += 1
+  s.runs += runs
   renderSpend()
 }
 
@@ -613,6 +701,7 @@ function renderCompare() {
 }
 
 async function halt() {
+  if (S.sweep) S.sweep.stop = true   // stop means the sweep, not just the repeat now in flight
   if (S.run) await api(`/run/${S.run.id}/stop`, {})
 }
 
@@ -650,6 +739,150 @@ function settle(d) {
   showErrors([])          // a clean run clears the marker a previous failure left on the tab
 }
 
+// ------------------------------------------------------------- run history
+
+const sig = () => S.stack.join('/')
+const visible = name => !$('#pane-' + name).hidden
+const clock = at => new Date(at * 1000).toLocaleTimeString()
+const num = x => Math.abs(x) >= 100 || Number.isInteger(x) ? x.toLocaleString(undefined, {maximumFractionDigits: 2}) : x.toPrecision(3)
+
+async function loadHistory() {
+  if (!S.ws || !S.stack.length) { S.hist = null; renderHistory(); return }
+  S.histSig = sig()
+  try { S.hist = await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}&limit=400`) }
+  catch (e) { S.hist = null }
+  renderHistory()
+  if (S.result) renderVariables(S.result)   // the past-values affordance lives on those rows
+}
+
+function samples(variable, model) {
+  if (!S.hist) return []
+  return S.hist.records.filter(r => r.variable === variable && (!model || r.model === model))
+}
+
+function values(box, rows) {
+  for (const r of [...rows].reverse()) {
+    const line = el('div', 'vrow')
+    line.append(el('span', 'when', clock(r.at)))
+    line.append(el('span', 'v', r.value === null || r.value === undefined ? '—' : String(r.value)))
+    if (r.truncated) line.append(el('span', 'tag bad', 'cut'))
+    const ins = Object.entries(r.inputs || {}).map(([k, v]) => `${k}: ${v}`)
+    line.title = [r.model, r.provider, ...ins].filter(Boolean).join('\n')
+    box.append(line)
+  }
+}
+
+// Counting distinct strings answers "how many names". It cannot answer "how many answers", since
+// the same answer written twice is two strings — so the values go through an embedding model and
+// come back grouped. Every count is shown with the threshold that produced it; without it a
+// cluster count is a number with a knob hidden behind it.
+function renderGroups(box, d) {
+  const out = el('div', 'groups')
+  if (d.error || d.note) {
+    out.append(el('div', d.error ? 'bad' : 'hint', d.error || d.note))
+    box.append(out); return
+  }
+  bank({prompt_tokens: d.usage.prompt_tokens, cost: d.usage.cost}, 0)
+  const head = el('div', 'hhead')
+  head.append(el('span', null, `${d.clusters} cluster${d.clusters === 1 ? '' : 's'} of ${d.embedded} distinct`),
+              el('span', null, `spread ${d.spread.toFixed(3)}`),
+              el('span', 'dim', `${d.model} · cosine ≥ ${d.threshold}`))
+  out.append(head)
+  for (const g of d.groups) {
+    const row = el('div', 'vrow')
+    row.append(el('span', 'when', `${g.length}×`), el('span', 'v', g.join('   ·   ')))
+    out.append(row)
+  }
+  box.append(out)
+}
+
+// The same declaration filled twenty times. Which is where the questions live that a single run
+// cannot answer: how far does this number move, and how many names does this model really have.
+function renderHistory() {
+  const p = $('#pane-history'); p.replaceChildren()
+  const h = S.hist
+  if (!h || !h.records.length) {
+    p.append(el('div', 'hint', S.stack.length
+      ? 'Nothing recorded for this order yet. Set the × next to Run and every value is kept here.'
+      : 'Compose a stack to see what it has produced before.'))
+    return
+  }
+  const runs = new Set(h.records.map(r => r.run)).size
+  const head = el('div', 'hhead')
+  head.append(el('span', null, `${runs} run${runs > 1 ? 's' : ''}`),
+              el('span', null, h.shown < h.total ? `last ${h.shown} of ${h.total} samples` : `${h.total} samples`),
+              el('span', 'dim', sig()))
+  const wipe = ghost('clear', `delete every recorded sample for ${sig()}`, async () => {
+    if (!confirm(`Delete all ${h.total} recorded samples for ${sig()}?`)) return
+    await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}`, {}, 'DELETE')
+    await loadHistory()
+  })
+  wipe.classList.add('right')
+  head.append(wipe)
+  p.append(head)
+
+  const t = el('table')
+  const hdr = el('tr')
+  for (const c of ['variable', 'model', 'n', 'distinct', 'spread', 'most common']) hdr.append(el('th', null, c))
+  t.append(hdr)
+
+  let last = null
+  for (const s of h.summary) {
+    const st = s.stats
+    const tr = el('tr', 'clickable')
+    tr.append(el('td', 'name', s.variable === last ? '' : s.variable))
+    last = s.variable
+    const m = el('td', 'val'); m.append(el('span', null, short(s.model)))
+    if (s.temp !== null && s.temp !== undefined) m.append(el('span', 'tag', 'T' + s.temp))
+    tr.append(m)
+    tr.append(el('td', 'num', String(st.n)))
+
+    const uq = el('td', 'num', `${st.unique_folded}`)
+    uq.title = st.unique === st.unique_folded ? 'distinct values, ignoring case and spacing'
+      : `${st.unique_folded} ignoring case and spacing, ${st.unique} exactly`
+    tr.append(uq)
+
+    const sp = el('td', 'num')
+    if (st.entropy !== undefined) {
+      const e = el('div', st.entropy < 0.6 ? 'bad' : null, 'H ' + st.entropy.toFixed(2))
+      e.title = 'normalised entropy: 1.00 when every run answered differently, 0.00 when they all agreed'
+      sp.append(e)
+    }
+    if (st.numeric && st.numeric.sd !== null)
+      sp.append(el('div', 'dim', `${num(st.numeric.mean)} ± ${num(st.numeric.sd)}`))
+    else if (st.numeric)
+      sp.append(el('div', 'dim', num(st.numeric.mean)))
+    tr.append(sp)
+
+    const top = el('td', 'val')
+    const [v, c] = st.top[0]
+    top.append(el('span', null, v || '(empty)'))
+    if (c > 1) top.append(el('span', 'tag', `${c}× ${(st.mode_share * 100).toFixed(0)}%`))
+    if (s.truncated) top.append(el('span', 'tag bad', `${s.truncated} cut`))
+    tr.append(top)
+    t.append(tr)
+
+    const det = el('tr', 'detail'); det.hidden = true
+    const cell = el('td', 'vals'); cell.colSpan = 6
+    const bar = el('div', 'vbar')
+    const embed = ghost('≈ group by meaning', 'embed the distinct values and cluster them — a fraction of a cent', async () => {
+      embed.disabled = true; embed.textContent = 'embedding…'
+      bar.querySelectorAll('.groups').forEach(n => n.remove())
+      try { renderGroups(bar, await api(`/w/${S.ws}/embed`, {stack: sig(), variable: s.variable, model: s.model || null})) }
+      catch (e) { renderGroups(bar, {error: e.message}) }
+      embed.disabled = false; embed.textContent = '≈ group by meaning'
+    })
+    bar.append(embed)
+    cell.append(bar)
+    values(cell, samples(s.variable, s.model))
+    det.append(cell)
+    tr.onclick = () => { det.hidden = !det.hidden }
+    tr.title = 'every recorded value for this variable'
+    t.append(det)
+  }
+  p.append(t)
+}
+
 function renderVariables(d) {
   const p = $('#pane-variables'); p.replaceChildren()
   const t = el('table')
@@ -664,6 +897,18 @@ function renderVariables(d) {
     tr.append(el('td', 'name', name))
     tr.append(el('td', 'type', v.type || ''))
     const val = el('td', 'val'); val.append(el('span', null, (v.value || '').slice(0, 160)))
+    // What this variable is now, over what it has been. A value only means something next to
+    // the other values the same declaration produced.
+    const past = samples(name, S.models.length === 1 ? S.models[0] : null)
+    if (past.length > 1) {
+      const list = el('div', 'past'); list.hidden = true
+      values(list, past)
+      const more = el('button', 'more', `▾ ${past.length}`)
+      more.type = 'button'
+      more.title = `${past.length} recorded values for ${name} — click to show`
+      more.onclick = () => { list.hidden = !list.hidden }
+      val.append(more, list)
+    }
     tr.append(val)
     tr.append(el('td', 'num', declared && v.usage ? v.usage.prompt_tokens.toLocaleString() : ''))
     tr.append(el('td', 'num', declared ? `${v.usage ? v.usage.completion_tokens : 0}/${v.arg[0]}` : ''))
@@ -721,7 +966,12 @@ function showPane(name) {
 
 // ---------------------------------------------------------------- wiring
 
-$('#ws-pick').onchange = async e => { S.ws = e.target.value; S.stack = []; S.open = null; restoreInputs(); await loadBrowser() }
+$('#ws-pick').onchange = async e => {
+  S.ws = e.target.value; S.stack = []; S.open = null; S.stackName = null; S.saved = null
+  S.hist = null; S.histSig = null
+  restoreInputs(); await loadBrowser()
+}
+$('#stack-new').onclick = newStack
 $('#ws-new').onclick = async () => {
   const name = prompt('workspace name'); if (!name) return
   try { await api('/workspaces', {name}); const d = await api('/workspaces')
@@ -817,16 +1067,21 @@ addEventListener('click', e => { if (!e.target.closest('.finder')) $('#picker').
 $('#provider').value = localStorage.getItem('prowl.studio.provider') || ''
 $('#provider').oninput = e => localStorage.setItem('prowl.studio.provider', e.target.value.trim())
 $('#atomic').onchange = renderStack
-$('#run').onclick = () => save().then(go)
+$('#provider').addEventListener('input', renderStack)   // the pin is part of the stack, so it can drift it
+$('#run').onclick = () => save().then(sweep)
 $('#stop').onclick = halt
-for (const b of document.querySelectorAll('.tabbar.sub button')) b.onclick = () => showPane(b.dataset.pane)
+$('#repeats').onchange = () => renderModels()
+for (const b of document.querySelectorAll('.tabbar.sub button')) b.onclick = () => {
+  showPane(b.dataset.pane)
+  if (b.dataset.pane === 'history' && (!S.hist || S.histSig !== sig())) loadHistory()
+}
 
 // Ctrl/Cmd+Enter runs from anywhere, including from inside an input you have just filled in.
 addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault()
     if (!$('#stop').hidden) halt()
-    else if (!$('#run').disabled) save().then(go)
+    else if (!$('#run').disabled) save().then(sweep)
   }
 })
 

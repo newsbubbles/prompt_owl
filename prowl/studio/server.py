@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import core, lang, workspace
+from . import core, embed, history, lang, workspace
 from ..lib.prowl import prowl
 from ..lib.log import log
 from ..lib.error import APIError, GenerationError
@@ -58,6 +58,14 @@ class StackBody(BaseModel):
     provider: Optional[str] = None
 
 
+class EmbedBody(BaseModel):
+    stack: str
+    variable: str
+    model: Optional[str] = None          # which generating model's values, not which embedder
+    embed_model: Optional[str] = None
+    threshold: float = embed.THRESHOLD
+
+
 class CheckBody(BaseModel):
     scripts: List[str]
     inputs: Dict[str, str] = {}
@@ -71,6 +79,7 @@ class RunBody(BaseModel):
     atomic: bool = False
     continue_ratio: float = 0.5
     extra: Optional[Dict[str, Any]] = None   # provider pinning, seed, response_format
+    stack_name: Optional[str] = None         # recorded with every sample, if this run has one
 
 
 # run_id -> {'stop': bool}. The client picks the id so it can arm the stop button before the
@@ -216,6 +225,37 @@ def delete_stack(ws: str, name: str):
     return {'stacks': workspace.drop_stack(ws, name)}
 
 
+@app.get('/api/w/{ws}/history')
+def get_history(ws: str, stack: str = '', model: str = '', variable: str = '', limit: int = 400):
+    """Every value this workspace has produced for a stack, plus what they look like together.
+    Summarised over exactly the rows returned, so the statistics always describe the visible
+    sample rather than a larger one the client cannot see."""
+    rows, total = history.read(ws, stack=stack or None, model=model or None,
+                               variable=variable or None, limit=max(1, min(limit, 5000)))
+    return {'records': rows, 'summary': history.summarise(rows), 'shown': len(rows), 'total': total}
+
+
+@app.delete('/api/w/{ws}/history')
+def delete_history(ws: str, stack: str = ''):
+    return {'dropped': history.clear(ws, stack=stack or None)}
+
+
+@app.post('/api/w/{ws}/embed')
+def embed_variable(ws: str, body: EmbedBody):
+    """Group one variable's recorded values by meaning rather than by string. Counting distinct
+    strings answers "how many names"; it cannot answer "how many answers", because the same answer
+    written twice is two strings. This spends money, so it is a button and not a page load."""
+    rows, _ = history.read(ws, stack=body.stack or None, model=body.model or None,
+                           variable=body.variable or None)
+    if not rows:
+        return {'error': 'nothing recorded for that variable'}
+    try:
+        return embed.measure([r.get('value') for r in rows], model=body.embed_model,
+                             threshold=body.threshold)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={'error': f"{type(e).__name__}: {e}"})
+
+
 @app.post('/api/w/{ws}/script/{name}/rename')
 def rename_script(ws: str, name: str, body: RenameBody):
     # server side so the .prout moves with its script and a clash is refused rather than raced
@@ -274,6 +314,12 @@ async def run(ws: str, body: RunBody):
     models = body.models or [None]           # None means whatever PROWL_MODEL is set to
     inputs = {k: v for k, v in body.inputs.items() if v.strip()}   # as in validate: blank is unset
 
+    # Every value this run produces, written once when the run ends. Which backend answered is
+    # part of the sample: the same id on two providers is two quantizations, and a distribution
+    # pooled across them is a distribution of the router.
+    pin = (((body.extra or {}).get('provider') or {}).get('order') or [None])[0]
+    sig, samples = history.signature(body.scripts), []
+
     async def stop_event():
         return state['stop']
 
@@ -291,6 +337,15 @@ async def run(ws: str, body: RunBody):
             # atomic=True is what carries `arg`, so the budget and temperature a value was declared
             # with travel with the value. Without it the results panel can only show what came back,
             # never what was asked for.
+            samples.append({
+                'at': round(time.time(), 3), 'run': body.run_id,
+                'stack': sig, 'stack_name': body.stack_name,
+                'model': model or os.getenv('PROWL_MODEL'), 'provider': pin,
+                'script': script_name, 'variable': variable.name, 'type': variable.type,
+                'value': variable.value, 'temp': variable.temperature, 'max': variable.max_tokens,
+                'tokens': variable.usage.completion_tokens if variable.usage else None,
+                'truncated': bool(variable.truncated), 'inputs': history.clip(inputs),
+            })
             await q.put(('var', {'model': model, 'script': script_name,
                                  **variable.to_dict(history=True, atomic=True)}))
 
@@ -344,6 +399,12 @@ async def run(ws: str, body: RunBody):
         except Exception as e:
             await q.put(('error', {'errors': [{'message': f"{type(e).__name__}: {e}"}]}))
         finally:
+            # A run that failed halfway still produced the values it got to, and those are the
+            # ones worth looking at when a model starts drifting.
+            try:
+                history.append(ws, samples)
+            except Exception as e:
+                log.warn(f"could not record run history: {type(e).__name__}: {e}")
             await q.put((None, None))
 
     async def events():

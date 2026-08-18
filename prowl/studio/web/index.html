@@ -17,6 +17,7 @@
   <input id="provider" placeholder="pin provider" spellcheck="false" title="Pin one backend, e.g. DeepInfra. One model id is served by several backends at different quantization, and they do not answer the same way — leave this empty and a comparison measures routing.">
   <div id="models" class="models"></div>
   <label class="check"><input type="checkbox" id="atomic"> atomic</label>
+  <label class="check" title="Run the stack this many times. One fill is an anecdote; a distribution needs repeats, and every value is kept in History."><span>×</span><input type="number" id="repeats" min="1" max="200" step="1" value="1"></label>
   <button id="run" class="go">▶ Run</button>
   <button id="stop" class="go stop" hidden>■ Stop</button>
   <div id="status" class="pill">connecting…</div>
@@ -26,7 +27,7 @@
   <aside>
     <div class="head"><span>scripts</span><button id="script-new" class="ghost wide">+ new</button></div>
     <ul id="browser" class="list"></ul>
-    <div class="head" id="stacks-head" hidden><span>stacks</span></div>
+    <div class="head" id="stacks-head"><span>stacks</span><button id="stack-new" class="ghost wide" title="start a new, empty stack">+ new</button></div>
     <ul id="stacks" class="list"></ul>
   </aside>
 
@@ -49,12 +50,14 @@
       <button data-pane="document" class="on">Document</button>
       <button data-pane="compare">Compare</button>
       <button data-pane="variables">Variables</button>
+      <button data-pane="history">History</button>
       <button data-pane="errors">Errors</button>
       <button data-pane="raw">Raw</button>
     </div>
     <div id="pane-document" class="pane"><div class="hint">Run the stack to see the document it builds.</div></div>
     <div id="pane-compare" class="pane" hidden><div class="hint">Add two or more models to compare them variable by variable.</div></div>
     <div id="pane-variables" class="pane" hidden></div>
+    <div id="pane-history" class="pane" hidden></div>
     <div id="pane-errors" class="pane" hidden></div>
     <div id="pane-raw" class="pane" hidden></div>
     <div id="usage" class="usage"></div>

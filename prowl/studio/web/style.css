@@ -49,6 +49,10 @@ select, #model, #provider {
   padding: 5px 8px; font-family: var(--mono); font-size: 12px;
 }
 .check { display: flex; align-items: center; gap: 5px; color: var(--dim); font-size: 12px; }
+#repeats {
+  width: 46px; background: var(--sunk); border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 4px 4px 6px; font: 12px var(--mono); text-align: right;
+}
 button { cursor: pointer; }
 .ghost {
   background: none; border: 1px solid var(--line); color: var(--dim);
@@ -132,7 +136,14 @@ table.grid td.name { color: var(--gen); white-space: nowrap; padding-right: 14px
 
 /* ---------------------------------------------------------------- layout */
 main { display: grid; grid-template-columns: 220px minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
-aside { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
+/* Scripts scroll, stacks stay put. A workspace with eighty scripts otherwise pushes the stacks
+   section a full screen below the fold, where nobody finds it. */
+aside {
+  border-right: 1px solid var(--line); background: var(--panel);
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto minmax(0, auto); min-height: 0;
+}
+#browser { overflow: auto; }
+#stacks { overflow: auto; max-height: 34vh; }
 /* stack, editor, caret bar, lints, inputs, forecast. The editor takes the 1fr: its children are
    absolutely positioned, so on an auto track it resolves to zero height and vanishes. */
 .center { display: grid; grid-template-rows: auto 1fr auto auto auto auto; min-height: 0; min-width: 0; }
@@ -181,7 +192,10 @@ aside { border-right: 1px solid var(--line); background: var(--panel); overflow:
 .chip .x { background: none; border: 0; color: var(--dim); padding: 0 2px; font-size: 14px; line-height: 1; }
 .chip .x:hover { color: var(--bad); }
 .arrow { color: var(--dim); font-size: 12px; }
-.save { margin-left: auto; }
+.stack-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.sname { font: 12px var(--mono); color: var(--accent); }
+.sname.none { color: var(--dim); font-style: italic; }
+.sname.dirty::after { content: ' •'; color: var(--gen); }
 
 /* ---------------------------------------------------------------- editor
    A textarea over a highlighted <pre>. The two must lay out identically to the pixel, so every
@@ -330,3 +344,25 @@ td.flags .tag { margin: 0 0 0 4px; }
   display: flex; gap: 16px; padding: 7px 14px; border-top: 1px solid var(--line);
   background: var(--panel); font: 11.5px var(--mono); color: var(--dim);
 }
+
+/* --------------------------------------------------------------- history */
+.hhead {
+  display: flex; align-items: center; gap: 14px; margin-bottom: 10px;
+  font: 11.5px var(--mono); color: var(--dim);
+}
+.hhead .dim { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hhead .right { margin-left: auto; flex: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+tr.detail td { background: var(--sunk); padding: 6px 10px; }
+.vrow { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; font: 11.5px var(--mono); }
+.vrow .when { flex: none; color: var(--dim); }
+.vrow .v { word-break: break-word; white-space: pre-wrap; }
+.vrow .tag { margin: 0; }
+.vbar { padding: 2px 0 6px; }
+.groups { margin: 6px 0 8px; border-left: 2px solid var(--type); padding-left: 8px; }
+.groups .hhead { margin: 0 0 4px; }
+.groups .vrow .when { color: var(--type); }
+button.more { background: none; border: 0; color: var(--dim); font: 10px var(--mono); padding: 0 4px; }
+button.more:hover { color: var(--accent); }
+.past { margin-top: 4px; border-left: 2px solid var(--line); padding-left: 8px; }
