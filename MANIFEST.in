@@ -1,5 +1,7 @@
 include README.md
 include LICENSE
+include AGENTS.md
+recursive-include skills *.md
 
 # Include all files under the examples and docs directories
 recursive-include tools *

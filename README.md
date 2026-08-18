@@ -39,6 +39,31 @@ PROWL_COMFY_ENDPOINT=127.0.0.1:8188
 # FAL_KEY=...
 ```
 
+## Prompt Owl Studio
+
+A local studio for composing, running and measuring stacks — script editors in stack order, live
+streaming, model comparison variable by variable, and a record of every value a variable has ever
+produced.
+
+```bash
+pip install -e ".[studio]"
+prowl-studio --env .env --open
+```
+
+Loopback by default, because a run spends money and the `@file` tool reads the filesystem.
+Everything the UI does it does over an HTTP API under `/api`, so a script or an agent can drive it
+without the browser at all.
+
+## Skills for coding agents
+
+Two skills ship in [`skills/`](skills/) — one for writing `.prowl`, one for running the studio —
+so Claude Code, Codex and similar harnesses arrive knowing how this works:
+
+```bash
+mkdir -p .claude/skills && cp -r skills/* .claude/skills/
+```
+
+See [`skills/README.md`](skills/README.md), or [`AGENTS.md`](AGENTS.md) for harnesses that read it.
 
 ## Backstory
 
