@@ -670,9 +670,65 @@ $('#editor').onkeydown = e => {
     S.dirty.add(ta.dataset.name); renderStack(); paint()
   }
 }
-$('#model').onkeydown = e => {
-  if (e.key === 'Enter') { e.preventDefault(); addModel(e.target.value); e.target.value = '' }
+// ---------------------------------------------------------------- model finder
+
+const FAV = 'prowl.studio.favourites'
+const favs = () => { try { return JSON.parse(localStorage.getItem(FAV) || '[]') } catch (e) { return [] } }
+const money = p => p === 0 ? 'free' : '$' + (p * 1e6).toFixed(2) + '/M'
+
+let pickTimer = null, pickOnlyFree = false
+function findModels() {
+  clearTimeout(pickTimer)
+  pickTimer = setTimeout(async () => {
+    const q = $('#model').value.trim()
+    const d = await api(`/models?q=${encodeURIComponent(q)}&free=${pickOnlyFree ? 1 : 0}&limit=40`)
+    renderPicker(d, q)
+  }, 180)
 }
+
+function renderPicker(d, q) {
+  const p = $('#picker'); p.replaceChildren(); p.hidden = false
+  const head = el('div', 'phead')
+  head.append(el('span', null, `${d.matched} of ${d.total} support stop`))
+  const f = el('button', 'chip-toggle' + (pickOnlyFree ? ' on' : ''), 'free only')
+  f.type = 'button'
+  f.onclick = () => { pickOnlyFree = !pickOnlyFree; findModels() }
+  head.append(f)
+  p.append(head)
+
+  const F = favs()
+  const rows = q ? d.models : [...d.models].sort((a, b) => (F.includes(b.id) - F.includes(a.id)))
+  if (!rows.length) p.append(el('div', 'muted', 'nothing matches'))
+  for (const m of rows.slice(0, 40)) {
+    const row = el('div', 'prow' + (S.models.includes(m.id) ? ' in' : ''))
+    const star = el('button', 'star' + (F.includes(m.id) ? ' on' : ''), F.includes(m.id) ? '★' : '☆')
+    star.type = 'button'; star.title = 'favourite'
+    star.onclick = e => {
+      e.stopPropagation()
+      const n = F.includes(m.id) ? F.filter(x => x !== m.id) : [...F, m.id]
+      localStorage.setItem(FAV, JSON.stringify(n)); findModels()
+    }
+    row.append(star, el('span', 'pid', m.id))
+    row.append(el('span', 'ppr', money(m.completion_price)))
+    row.append(el('span', 'pctx', m.context ? (m.context / 1000).toFixed(0) + 'k' : ''))
+    const flags = el('span', 'pflags')
+    if (m.structured) flags.append(el('span', 'tag', 'json'))
+    if (m.seed) flags.append(el('span', 'tag', 'seed'))
+    if (m.logprobs) flags.append(el('span', 'tag', 'logp'))
+    row.append(flags)
+    row.title = `${m.name}\ncontext ${m.context}\nprompt ${money(m.prompt_price)} · completion ${money(m.completion_price)}`
+    row.onclick = () => { addModel(m.id); $('#model').value = ''; findModels() }
+    p.append(row)
+  }
+}
+
+$('#model').oninput = findModels
+$('#model').onfocus = findModels
+$('#model').onkeydown = e => {
+  if (e.key === 'Enter') { e.preventDefault(); addModel(e.target.value.trim()); e.target.value = ''; findModels() }
+  if (e.key === 'Escape') $('#picker').hidden = true
+}
+addEventListener('click', e => { if (!e.target.closest('.finder')) $('#picker').hidden = true })
 $('#provider').value = localStorage.getItem('prowl.studio.provider') || ''
 $('#provider').oninput = e => localStorage.setItem('prowl.studio.provider', e.target.value.trim())
 $('#atomic').onchange = renderStack

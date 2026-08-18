@@ -10,7 +10,10 @@
   <h1>prowl <span>studio</span></h1>
   <select id="ws-pick" title="workspace"></select>
   <button id="ws-new" class="ghost" title="new workspace">+</button>
-  <input id="model" placeholder="model id — Enter to add" spellcheck="false">
+  <div class="finder">
+    <input id="model" placeholder="search models…" spellcheck="false" autocomplete="off">
+    <div id="picker" class="picker" hidden></div>
+  </div>
   <input id="provider" placeholder="pin provider" spellcheck="false" title="Pin one backend, e.g. DeepInfra. One model id is served by several backends at different quantization, and they do not answer the same way — leave this empty and a comparison measures routing.">
   <div id="models" class="models"></div>
   <label class="check"><input type="checkbox" id="atomic"> atomic</label>

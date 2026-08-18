@@ -73,6 +73,37 @@ button { cursor: pointer; }
 }
 .go:disabled { background: var(--line); color: var(--dim); cursor: not-allowed; }
 .go.stop { background: var(--bad); color: #200; }
+.finder { position: relative; }
+.picker {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
+  width: 620px; max-height: 60vh; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .45);
+}
+.phead {
+  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-bottom: 1px solid var(--line); font: 11px var(--mono); color: var(--dim);
+  position: sticky; top: 0; background: var(--panel);
+}
+.chip-toggle {
+  margin-left: auto; background: none; border: 1px solid var(--line); color: var(--dim);
+  border-radius: 999px; padding: 1px 9px; font: 10px var(--mono);
+}
+.chip-toggle.on { color: var(--accent); border-color: var(--accent); }
+.prow {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  font: 11.5px var(--mono); cursor: pointer;
+}
+.prow:hover { background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.prow.in { color: var(--accent); }
+.prow .star { background: none; border: 0; color: var(--dim); padding: 0; font-size: 12px; line-height: 1; }
+.prow .star.on { color: var(--gen); }
+.prow .pid { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .ppr { color: var(--ok); width: 84px; text-align: right; }
+.prow .pctx { color: var(--dim); width: 46px; text-align: right; }
+.prow .pflags { width: 128px; display: flex; gap: 3px; justify-content: flex-end; }
+.prow .pflags .tag { margin: 0; }
+
 .models { display: flex; gap: 4px; flex-wrap: wrap; max-width: 380px; }
 .mchip {
   display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 7px;

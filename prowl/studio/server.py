@@ -5,8 +5,10 @@
 # Loopback by default and deliberately. A run spends money and the @file tool reads the
 # filesystem; neither belongs on an interface reachable from anywhere else by accident.
 
-import os, json, asyncio, argparse, webbrowser
+import os, json, time, asyncio, argparse, webbrowser
 from typing import Optional, List, Dict, Any
+
+import requests
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -80,6 +82,83 @@ def health():
 @app.get('/api/lang')
 def language():
     return lang.describe()
+
+
+# The catalogue needs no key and changes slowly, so one fetch serves the session.
+CATALOGUE = os.getenv('PROWL_MODELS_URL', 'https://openrouter.ai/api/v1/models')
+_cat: Dict[str, Any] = {'at': 0.0, 'rows': [], 'error': None}
+
+
+def catalogue(force=False):
+    if not force and _cat['rows'] and time.time() - _cat['at'] < 1800:
+        return _cat['rows']
+    try:
+        d = requests.get(CATALOGUE, timeout=20).json()['data']
+    except Exception as e:
+        _cat['error'] = f"{type(e).__name__}: {e}"
+        return _cat['rows']
+    rows = []
+    for m in d:
+        sp = m.get('supported_parameters') or []
+        pr = m.get('pricing') or {}
+        rows.append({
+            'id': m['id'],
+            'name': m.get('name') or m['id'],
+            'context': m.get('context_length'),
+            'prompt_price': float(pr.get('prompt') or 0),
+            'completion_price': float(pr.get('completion') or 0),
+            # `stop` is the one that decides whether prowl works at all
+            'stop': 'stop' in sp,
+            'structured': 'structured_outputs' in sp,
+            'seed': 'seed' in sp,
+            'logprobs': 'logprobs' in sp,
+            'n': 'n' in sp,
+            'instruct_type': (m.get('architecture') or {}).get('instruct_type'),
+        })
+    _cat.update(at=time.time(), rows=rows, error=None)
+    return rows
+
+
+@app.get('/api/models')
+def models(q: str = '', stop: bool = True, free: bool = False, limit: int = 50):
+    """Search the model catalogue. `stop` defaults to True because a model without stop
+    sequences cannot run a prowl script correctly -- every variable generates to max_tokens and
+    is trimmed afterwards, which costs the full budget and gets the shapes wrong."""
+    rows = catalogue()
+    terms = [t for t in q.lower().split() if t]
+    out = []
+    for r in rows:
+        if stop and not r['stop']:
+            continue
+        # A negative price is the router's "varies" sentinel (openrouter/auto reports -1e6).
+        # It is not free, and sorting on it puts a meta-model above every real one.
+        priced = r['completion_price'] >= 0
+        if free and not (priced and r['completion_price'] == 0):
+            continue
+        hay = f"{r['id']} {r['name']}".lower()
+        if all(t in hay for t in terms):
+            out.append(r)
+    out.sort(key=lambda r: (0 if r['completion_price'] >= 0 else 1, r['completion_price'], r['id']))
+    return {'total': len(rows), 'matched': len(out), 'models': out[:limit],
+            'stale': _cat['error']}
+
+
+@app.get('/api/model-endpoints')
+def model_endpoints(id: str):
+    """Which backends serve one model id, at what quantization and price. Same id, different
+    machines: pinning is the difference between measuring a model and measuring routing."""
+    try:
+        d = requests.get(f"https://openrouter.ai/api/v1/models/{id}/endpoints", timeout=20).json()
+        eps = (d.get('data') or {}).get('endpoints') or []
+    except Exception as e:
+        return {'id': id, 'endpoints': [], 'error': f"{type(e).__name__}: {e}"}
+    return {'id': id, 'endpoints': [{
+        'provider': e.get('provider_name'),
+        'quantization': e.get('quantization'),
+        'context': e.get('context_length'),
+        'completion_price': float((e.get('pricing') or {}).get('completion') or 0),
+        'stop': 'stop' in (e.get('supported_parameters') or []),
+    } for e in eps]}
 
 
 @app.get('/api/workspaces')
