@@ -70,6 +70,25 @@ filesystem. Binding elsewhere logs a warning; do not do it without being asked.
 
 `GET /api/health` reports `has_key` (never the key), the endpoint, the model and the budget.
 
+### Pointing it at a backend
+
+Prowl wants `/v1/completions`, because prefix continuation is what the language is. Anything that
+serves the OpenAI shape works, and the base URL is the origin — prowl appends the path.
+
+| backend | `PROWL_VLLM_ENDPOINT` | notes |
+|---|---|---|
+| OpenRouter | `https://openrouter.ai/api` | needs `PROWL_VENDOR_API_KEY`; 284 of 414 models support `stop`, and a model without it cannot run a script correctly |
+| vLLM | `http://localhost:8000` | the reference setup; completions native |
+| Ollama | `http://localhost:11434` | use its **OpenAI-compatible** paths, not `/api/generate` — the native shape returns `response`, not `choices[].text` |
+| llama.cpp server | `http://localhost:8080` | completions native |
+| anything chat-only | as above | tick `chat` / set `PROWL_CHAT=1` — assistant prefill, same mechanism, ~19–91% more tokens |
+
+`PROWL_COMPLETIONS_ENDPOINT` overrides the path if a server puts it somewhere else.
+
+**`GET /api/probe` answers "is this set up right" directly.** It sends one token down
+`/v1/completions` and `/v1/chat/completions` and reports status, error and the text that came
+back, so a misconfiguration is one request rather than a log hunt. In the UI, click the spend pill.
+
 ## The API is the interface
 
 Prefer this over clicking. Everything is under `/api`, JSON in and out.
@@ -90,7 +109,9 @@ Prefer this over clicking. Everything is under `/api`, JSON in and out.
 | POST | `/run/{run_id}/stop` | stops a run within one declaration |
 | GET | `/w/{ws}/history?stack=&by=&clean=&limit=` | recorded samples + statistics |
 | DELETE | `/w/{ws}/history?stack=` | drop recorded samples |
+| GET | `/w/{ws}/export?stack=&format=&variable=` | csv, jsonl, json, messages, alpaca |
 | POST | `/w/{ws}/embed` | cluster a variable's values by meaning |
+| GET | `/probe` | does the configured endpoint answer, and in which shape |
 
 **Always `validate` before `run`.** It costs nothing and returns `errors`, `declarations`,
 `max_completion_tokens`, `over_budget`, `inputs_required` and `inputs_missing`. A run whose worst
@@ -152,6 +173,17 @@ clusters them, returning `clusters`, `spread` (mean pairwise cosine distance), t
 cost. Use it when the values are sentences: 32 back-translations were 32 distinct strings (100%,
 no information) and 14 clusters, one holding 19 — the 13 singletons were the actual failures.
 
+### Getting results out
+
+`GET /w/{ws}/export` in five shapes. `csv` (BOM'd, so Excel reads the UTF-8), `jsonl` and `json`
+carry the samples. `messages` and `alpaca` carry **training pairs**, which exist because a run is
+one token sequence whose spans are named: `completion[:start]` is exactly the prompt that produced
+`completion[start:end]`, so one run yields one pair per declaration, and the prompt is the real
+growing prompt with every earlier value spliced in — not a template with the inputs pasted back.
+
+Finished documents are kept in `runs/documents.jsonl` alongside `runs/history.jsonl`; the training
+formats read the documents, the rest read the samples.
+
 ## The loop that produces a result
 
 1. `validate` the stack. Fix errors before spending anything.
@@ -186,6 +218,8 @@ Handles worth knowing:
 | `#stack .chip` | one script in the stack; draggable, `Alt+←/→` reorders |
 | `#model` / `#provider` | model search box (Enter adds), provider pin |
 | `#repeats` | run count; fire `change` after setting `.value` |
+| `#chat` | talk to the chat endpoint by assistant prefill instead of completions |
+| `#theme` | palette: `owl` (default), `paper`, `ember`, `terminal`, `slate` |
 | `#run` / `#stop` | run reads `▶ Run ×N` for inputs × repeats × models |
 | `.inputs .vary` | mark an input to vary — its box becomes one value per line |
 | `.tabbar.sub button[data-pane=…]` | `document` `compare` `variables` `history` `errors` `raw` |
@@ -221,3 +255,10 @@ new Promise(r => setTimeout(() => r({
   real money, so an over-budget stack will not start.
 - **Cost is real but small.** A 40-generation sweep of short declarations is well under a cent.
   Say what a sweep will cost before starting a large one; the UI confirms above 20 generations.
+- **A failing declaration is often three steps upstream.** `fidelity` raising "no number in the
+  completion" meant an earlier `{instruction}` had echoed a heading and every declaration after it
+  degenerated. Read the Compare grid — `failed_variable` says where it stopped, the values above
+  it say why.
+- **Themes are eleven CSS variables** on `:root[data-theme=…]` in `style.css` and nothing else. A
+  new palette needs no rule anywhere; if a colour has to be added outside those tokens, that is a
+  sign the design is leaking.

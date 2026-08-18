@@ -10,12 +10,12 @@ from typing import Optional, List, Dict, Any
 
 import requests
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import core, embed, history, lang, workspace
+from . import core, embed, export, history, lang, workspace
 from ..lib.prowl import prowl
 from ..lib.log import log
 from ..lib.error import APIError, GenerationError
@@ -57,6 +57,7 @@ class StackBody(BaseModel):
     atomic: bool = False
     provider: Optional[str] = None
     sweep: List[str] = []      # inputs whose box holds one value per line, run one at a time
+    chat: Optional[bool] = None
 
 
 class EmbedBody(BaseModel):
@@ -82,6 +83,7 @@ class RunBody(BaseModel):
     continue_ratio: float = 0.5
     extra: Optional[Dict[str, Any]] = None   # provider pinning, seed, response_format
     stack_name: Optional[str] = None         # recorded with every sample, if this run has one
+    chat: Optional[bool] = None              # None follows the endpoint and PROWL_CHAT
 
 
 # run_id -> {'stop': bool}. The client picks the id so it can arm the stop button before the
@@ -243,7 +245,71 @@ def get_history(ws: str, stack: str = '', model: str = '', variable: str = '',
 
 @app.delete('/api/w/{ws}/history')
 def delete_history(ws: str, stack: str = ''):
-    return {'dropped': history.clear(ws, stack=stack or None)}
+    return {'dropped': history.clear(ws, stack=stack or None),
+            'documents': history.clear(ws, stack=stack or None, which=history.DOCS)}
+
+
+@app.get('/api/w/{ws}/export')
+def export_history(ws: str, stack: str = '', format: str = 'csv', variable: str = ''):
+    """Results in a shape something else already reads. `csv` and `jsonl` carry the samples;
+    `messages` and `alpaca` carry prompt/completion pairs cut out of the finished documents by
+    the spans, one per declaration."""
+    rows, _ = history.read(ws, stack=stack or None, variable=variable or None)
+    docs, _ = history.documents(ws, stack=stack or None) if format in ('messages', 'alpaca') else ([], 0)
+    try:
+        body = export.render(format, rows, docs, variable=variable or None)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={'error': str(e)})
+    media, ext = export.FORMATS[format]
+    name = f"{ws}-{(stack or 'all').replace('/', '-')}.{ext}"
+    # Excel reads UTF-8 CSV only with a BOM, and a mangled name column is the first thing anyone
+    # notices about an export.
+    text = ('﻿' + body) if format == 'csv' else body
+    return Response(content=text.encode('utf-8'), media_type=media,
+                    headers={'Content-Disposition': f'attachment; filename="{name}"'})
+
+
+@app.get('/api/probe')
+def probe():
+    """Does the configured endpoint actually answer, and in which shape. One token each, so it
+    costs nothing and settles 'is my Ollama/vLLM/OpenRouter set up right' without reading logs."""
+    base = (os.getenv('PROWL_VLLM_ENDPOINT') or '').rstrip('/')
+    model = os.getenv('PROWL_MODEL')
+    key = os.getenv('PROWL_VENDOR_API_KEY')
+    if not base:
+        return {'endpoint': None, 'error': 'PROWL_VLLM_ENDPOINT is not set'}
+    headers = {'content-type': 'application/json'}
+    if key:
+        headers['Authorization'] = f"Bearer {key}"
+
+    def attempt(path, payload, pick):
+        url = base + path
+        try:
+            r = requests.post(url, json={'model': model, 'max_tokens': 1, **payload},
+                              headers=headers, timeout=20)
+        except Exception as e:
+            return {'url': url, 'ok': False, 'error': f"{type(e).__name__}: {e}"}
+        try:
+            d = r.json()
+        except ValueError:
+            return {'url': url, 'ok': False, 'status': r.status_code, 'error': r.text[:200]}
+        choices = d.get('choices') or []
+        got = pick(choices[0]) if choices else None
+        return {'url': url, 'ok': r.status_code == 200 and got is not None,
+                'status': r.status_code,
+                'error': ((d.get('error') or {}).get('message') if isinstance(d.get('error'), dict)
+                          else d.get('error')),
+                'sample': (got or '')[:40]}
+
+    return {
+        'endpoint': base, 'model': model, 'has_key': bool(key),
+        # prowl wants completions; chat works by assistant prefill when it does not
+        'completions': attempt('/v1/completions', {'prompt': 'The capital of France is'},
+                               lambda c: c.get('text')),
+        'chat': attempt('/v1/chat/completions',
+                        {'messages': [{'role': 'user', 'content': 'Say ok'}]},
+                        lambda c: ((c.get('message') or {}).get('content'))),
+    }
 
 
 @app.post('/api/w/{ws}/embed')
@@ -348,7 +414,8 @@ async def run(ws: str, body: RunBody):
                 'at': round(time.time(), 3), 'run': body.run_id,
                 'stack': sig, 'stack_name': body.stack_name,
                 'model': model or os.getenv('PROWL_MODEL'), 'provider': pin,
-                'script': script_name, 'variable': variable.name, 'type': variable.type,
+                'chat': bool(body.chat), 'script': script_name,
+                'variable': variable.name, 'type': variable.type,
                 'value': variable.value, 'temp': variable.temperature, 'max': variable.max_tokens,
                 'tokens': variable.usage.completion_tokens if variable.usage else None,
                 'truncated': bool(variable.truncated), 'inputs': history.clip(inputs),
@@ -367,12 +434,25 @@ async def run(ws: str, body: RunBody):
     async def drive_one(model):
         try:
             r = await rig(model).run(body.scripts, inputs=inputs, atomic=body.atomic,
-                                     model=model, extra=body.extra,
+                                     model=model, extra=body.extra, chat=body.chat,
                                      continue_ratio=body.continue_ratio,
                                      stream_level=prowl.StreamLevel.TOKEN)
             done = r.to_dict()
             done['variables'] = {k: v.to_dict(history=True, atomic=True)
                                  for k, v in r.variables.items()}
+            # Keep the finished document and where each declaration landed in it. Without the
+            # spans a value is a value; with them the run is a set of prompt/completion pairs.
+            spans = {}
+            for name, v in r.variables.items():
+                for h in v.hist():
+                    if h.get('span'):
+                        spans.setdefault(name, []).append(h['span'])
+            history.save_document(ws, {
+                'at': round(time.time(), 3), 'run': body.run_id, 'stack': sig,
+                'stack_name': body.stack_name, 'model': model or os.getenv('PROWL_MODEL'),
+                'provider': pin, 'chat': bool(body.chat), 'inputs': history.clip(inputs),
+                'completion': r.completion, 'spans': spans, 'usage': r.usage.dict(),
+            })
             await q.put(('done', {'model': model, 'ok': True, 'stopped': state['stop'], **done}))
         except GenerationError as e:
             # the whole point of comparing models: WHICH variable stopped filling on this one

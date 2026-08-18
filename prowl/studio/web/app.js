@@ -64,7 +64,8 @@ async function boot() {
   S.spent = {prompt: 0, completion: 0, cost: 0, elapsed: 0, runs: 0}
   S.noKey = !h.has_key
   renderSpend()
-  $('#status').title = `${h.endpoint || 'no endpoint'} · ${h.root}`
+  $('#status').title = `${h.endpoint || 'no endpoint'} · ${h.root}\nclick to test the endpoint`
+  $('#status').onclick = probe
 
   const pick = $('#ws-pick')
   pick.replaceChildren(...ws.workspaces.map(w => el('option', null, w)))
@@ -212,7 +213,7 @@ function ghost(text, title, fn) {
 const spec = () => ({
   scripts: [...S.stack], inputs: {...S.inputs}, models: [...S.models],
   atomic: $('#atomic').checked, provider: ($('#provider').value || '').trim() || null,
-  sweep: [...S.varying].sort(),
+  sweep: [...S.varying].sort(), chat: $('#chat').checked,
 })
 const drifted = () => !!S.stackName && JSON.stringify(spec()) !== JSON.stringify(S.saved)
 
@@ -246,6 +247,7 @@ async function applyStack(name, saved) {
   if (saved.models && saved.models.length) { S.models = [...saved.models]; persistModels(); renderModels() }
   if (saved.provider !== undefined && saved.provider !== null) $('#provider').value = saved.provider
   $('#atomic').checked = !!saved.atomic
+  $('#chat').checked = !!saved.chat
   S.varying = new Set(saved.sweep || [])
   persistInputs()
   S.stackName = name
@@ -595,6 +597,7 @@ async function go(over) {
   const body = {
     run_id: id, scripts: S.stack, inputs, atomic: $('#atomic').checked,
     models: S.models, extra: pinned(), stack_name: S.stackName,
+    chat: $('#chat').checked || null,   // null follows the endpoint and PROWL_CHAT
   }
 
   try {
@@ -667,7 +670,7 @@ function renderSpend() {
   if (s.elapsed) bits.push(`${s.elapsed.toFixed(1)}s`)
   p.textContent = bits.join(' · ')
   p.title = `${s.prompt.toLocaleString()} prompt + ${s.completion.toLocaleString()} completion\n` +
-            `budget per run ${S.budget.toLocaleString()} completion tokens`
+            `budget per run ${S.budget.toLocaleString()} completion tokens\nclick to test the endpoint`
 }
 
 // `runs` counts runs. An embedding call spends money without being one, so it banks its cost
@@ -919,6 +922,23 @@ function renderHistory() {
   pick.title = 'which axis to cut the samples along'
   pick.onchange = () => { S.by = pick.value; localStorage.setItem('prowl.studio.by', S.by); loadHistory() }
   head.append(pick, el('span', 'dim', sig()))
+  // A log is where measurements go to die. csv opens in a spreadsheet, jsonl is the native
+  // record, and messages/alpaca are the finished documents cut at the spans into one training
+  // pair per declaration -- prompt is the real growing prompt, not a template.
+  const out = el('select', 'axis')
+  for (const [v, label] of [['', 'export…'], ['csv', 'CSV'], ['jsonl', 'JSONL'], ['json', 'JSON'],
+                            ['messages', 'chat pairs (.jsonl)'], ['alpaca', 'alpaca (.jsonl)']]) {
+    const o = el('option', null, label); o.value = v; out.append(o)
+  }
+  out.title = 'download these samples in a format something else reads'
+  out.onchange = () => {
+    if (!out.value) return
+    // a normal navigation: this is a local server, and the browser handles the save dialog
+    location.href = `/api/w/${S.ws}/export?stack=${encodeURIComponent(sig())}&format=${out.value}`
+    out.value = ''
+  }
+  head.append(out)
+
   const wipe = ghost('clear', `delete every recorded sample for ${sig()}`, async () => {
     if (!confirm(`Delete all ${h.total} recorded samples for ${sig()}?`)) return
     await api(`/w/${S.ws}/history?stack=${encodeURIComponent(sig())}`, {}, 'DELETE')
@@ -1085,6 +1105,37 @@ function renderUsage(u) {
   box.append(el('span', null, `${(u.elapsed || 0).toFixed(1)}s`))
 }
 
+// "Is my endpoint set up right" is the first question anyone has and the worst one to answer from
+// logs. One token down each path, and it says which shapes actually answered.
+async function probe() {
+  const p = $('#pane-errors'); p.replaceChildren()
+  showPane('errors')
+  p.append(el('div', 'hint', 'probing…'))
+  let d
+  try { d = await api('/probe') } catch (e) { d = {error: e.message} }
+  p.replaceChildren()
+  if (d.error) { p.append(el('div', 'err', d.error)); return }
+  const head = el('div', 'hhead')
+  head.append(el('span', null, d.endpoint || 'no endpoint'),
+              el('span', 'dim', d.model || 'no PROWL_MODEL'),
+              el('span', d.has_key ? null : 'bad', d.has_key ? 'key set' : 'no key'))
+  p.append(head)
+  for (const which of ['completions', 'chat']) {
+    const r = d[which] || {}
+    const box = el('div', 'err')
+    box.style.borderLeftColor = r.ok ? 'var(--ok)' : 'var(--bad)'
+    box.append(el('code', null, which), el('span', null, ` ${r.status || '—'} ${r.url || ''}`))
+    box.append(el('div', 'muted', r.ok ? `answered: ${JSON.stringify(r.sample)}`
+                                       : (r.error || 'no usable choice in the response')))
+    p.append(box)
+  }
+  p.append(el('div', 'hint', d.completions && d.completions.ok
+    ? 'Prowl uses completions. This endpoint is ready.'
+    : d.chat && d.chat.ok
+      ? 'Completions did not answer but chat did — tick `chat` in the header to run by assistant prefill.'
+      : 'Neither shape answered. Check PROWL_VLLM_ENDPOINT, the model id, and the key.'))
+}
+
 function showPane(name) {
   for (const b of document.querySelectorAll('.tabbar.sub button')) b.classList.toggle('on', b.dataset.pane === name)
   for (const p of document.querySelectorAll('.pane')) p.hidden = p.id !== 'pane-' + name
@@ -1193,6 +1244,24 @@ addEventListener('click', e => { if (!e.target.closest('.finder')) $('#picker').
 $('#provider').value = localStorage.getItem('prowl.studio.provider') || ''
 $('#provider').oninput = e => localStorage.setItem('prowl.studio.provider', e.target.value.trim())
 $('#atomic').onchange = renderStack
+$('#chat').onchange = renderStack
+
+// Eleven CSS variables, so a theme is a palette and never a rule. The default is the one this
+// was built in; the rest exist because staring at one palette for a week is a choice.
+const THEMES = [['', 'owl'], ['paper', 'paper'], ['ember', 'ember'], ['terminal', 'terminal'],
+                ['slate', 'slate']]
+function theme(name) {
+  if (name) document.documentElement.dataset.theme = name
+  else delete document.documentElement.dataset.theme
+  try { localStorage.setItem('prowl.studio.theme', name) } catch (e) {}
+}
+{
+  const sel = $('#theme')
+  for (const [v, label] of THEMES) { const o = el('option', null, label); o.value = v; sel.append(o) }
+  sel.value = localStorage.getItem('prowl.studio.theme') || ''
+  theme(sel.value)
+  sel.onchange = () => theme(sel.value)
+}
 $('#provider').addEventListener('input', renderStack)   // the pin is part of the stack, so it can drift it
 $('#run').onclick = () => save().then(sweep)
 $('#stop').onclick = halt

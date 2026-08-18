@@ -1,4 +1,6 @@
-/* Dark first, because this is a tool you sit in. */
+/* Eleven colours and two families. Every theme below is those same tokens and nothing else, so a
+   new palette never needs a rule anywhere in this file. Dark first, because this is a tool you
+   sit in. */
 :root {
   --bg: #0e1014;
   --panel: #14171d;
@@ -14,11 +16,36 @@
   --mono: ui-monospace, "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   --sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
+
+/* System preference decides only when nothing has been chosen. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #f7f8fa; --panel: #fff; --sunk: #fbfbfc; --line: #e3e6ec; --ink: #1a1d23; --dim: #6b7280;
     --accent: #0b69c7; --gen: #a35c00; --type: #6b3fd4; --ok: #0d7a63; --bad: #c62828;
   }
+}
+
+:root[data-theme="paper"] {
+  --bg: #f7f8fa; --panel: #fff; --sunk: #fbfbfc; --line: #e3e6ec; --ink: #1a1d23; --dim: #6b7280;
+  --accent: #0b69c7; --gen: #a35c00; --type: #6b3fd4; --ok: #0d7a63; --bad: #c62828;
+}
+/* Warm, low-blue: the same layout at two in the morning. */
+:root[data-theme="ember"] {
+  --bg: #17120e; --panel: #1e1813; --sunk: #120e0a; --line: #33291f; --ink: #ecdcc8;
+  --dim: #9a8571; --accent: #ffab5e; --gen: #ffd48a; --type: #d79bff; --ok: #a8d982;
+  --bad: #ff8a7a;
+}
+/* Phosphor. Generated spans read as the bright channel, everything else recedes. */
+:root[data-theme="terminal"] {
+  --bg: #05070a; --panel: #080c10; --sunk: #000205; --line: #17301f; --ink: #b9f0c8;
+  --dim: #4f7a5e; --accent: #4dffa1; --gen: #d8ff5e; --type: #63e6ff; --ok: #4dffa1;
+  --bad: #ff5f6d;
+}
+/* No hue at all, so colour never carries meaning on its own. */
+:root[data-theme="slate"] {
+  --bg: #101010; --panel: #171717; --sunk: #0a0a0a; --line: #2a2a2a; --ink: #e6e6e6;
+  --dim: #8a8a8a; --accent: #ffffff; --gen: #bdbdbd; --type: #9e9e9e; --ok: #d4d4d4;
+  --bad: #ff6b6b;
 }
 
 * { box-sizing: border-box; }
@@ -42,6 +69,8 @@ select, #model {
 }
 #model { width: 210px; }
 #provider { width: 110px; }
+#theme { padding: 3px 4px; font-size: 11px; opacity: .65; }
+#theme:hover, #theme:focus { opacity: 1; }
 select, #model, #provider {
   background: var(--sunk); border: 1px solid var(--line); border-radius: 6px;
   padding: 5px 8px; font-family: var(--mono); font-size: 12px;
@@ -127,9 +156,10 @@ table.grid td.cell .tag { margin: 0 4px 0 0; }
 table.grid td.name { color: var(--gen); white-space: nowrap; padding-right: 14px; }
 
 .pill {
-  margin-left: auto; font: 12px var(--mono); color: var(--dim);
+  margin-left: auto; font: 12px var(--mono); color: var(--dim); cursor: pointer;
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; white-space: nowrap;
 }
+.pill:hover { border-color: var(--accent); color: var(--ink); }
 .pill.bad { color: var(--bad); border-color: var(--bad); }
 
 /* ---------------------------------------------------------------- layout */
@@ -208,6 +238,13 @@ aside {
   font: 13px/1.65 var(--mono); tab-size: 2; letter-spacing: 0;
   white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word;
 }
+/* The rule above sets the font on the <pre>, and the browser's own stylesheet then sets
+   `code { font-family: monospace }`, which beats inheritance and renders the overlay in a
+   different face from the textarea. It costs 0.47px per character: by column 40 the highlight
+   sits nearly three characters left of the caret, resetting at every line, which reads as a
+   fixed offset rather than as drift. Every property that affects glyph advance has to be set on
+   the element that actually holds the text. */
+.ed .hl code { font: inherit; letter-spacing: inherit; tab-size: inherit; }
 .ed .hl {
   position: absolute; inset: 0; overflow: hidden; pointer-events: none;
   color: var(--ink); background: var(--bg);

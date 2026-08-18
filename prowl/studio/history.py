@@ -13,12 +13,17 @@ import os, json, math, threading, unicodedata
 from . import workspace
 
 FILE = ('runs', 'history.jsonl')
+# The finished document of each run, kept separately because it is two orders of magnitude larger
+# than a sample and is only needed when exporting. A declaration's span into it is what turns one
+# run into N prompt/completion pairs.
+DOCS = ('runs', 'documents.jsonl')
 CLIP = 120          # per input value: enough to tell two runs apart, not a copy of the prompt
+HUGE = 512_000      # one run's document; past this it is a log, not a record
 WRITE = threading.Lock()
 
 
-def path(ws):
-    return workspace.path(ws, *FILE)
+def path(ws, which=FILE):
+    return workspace.path(ws, *which)
 
 
 def signature(scripts):
@@ -42,6 +47,45 @@ def append(ws, records):
         with open(p, 'a', encoding='utf-8', newline='') as f:
             f.write(body)
     return len(records)
+
+
+def save_document(ws, doc):
+    """The finished document of one model's run, with every declaration's span into it.
+
+    A prowl run is one token sequence whose spans happen to be named, so `completion[:start]` is
+    exactly the prompt that produced `completion[start:end]`. That is a training pair, and there
+    is one per declaration -- which is the whole reason to keep the document rather than only the
+    values."""
+    body = json.dumps(doc, ensure_ascii=False)
+    if len(body) > HUGE:
+        return 0
+    p = path(ws, DOCS)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with WRITE:
+        with open(p, 'a', encoding='utf-8', newline='') as f:
+            f.write(body + '\n')
+    return 1
+
+
+def documents(ws, stack=None, limit=None):
+    p = path(ws, DOCS)
+    if not os.path.exists(p):
+        return [], 0
+    rows = []
+    with open(p, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if stack and d.get('stack') != stack:
+                continue
+            rows.append(d)
+    total = len(rows)
+    return (rows[-limit:] if limit and total > limit else rows), total
 
 
 def read(ws, stack=None, model=None, variable=None, limit=None):
@@ -71,8 +115,8 @@ def read(ws, stack=None, model=None, variable=None, limit=None):
     return (rows[-limit:] if limit and total > limit else rows), total
 
 
-def clear(ws, stack=None):
-    p = path(ws)
+def clear(ws, stack=None, which=FILE):
+    p = path(ws, which)
     if not os.path.exists(p):
         return 0
     if not stack:
@@ -155,7 +199,7 @@ def stats(values):
 # Which axis the samples are cut along. `model` answers "do these models differ"; `input:language`
 # answers "does this prompt hold up in Japanese" -- the same values, a different question, and the
 # statistics are only worth anything once you can choose which one you are asking.
-AXES = ('model', 'provider', 'stack_name', 'script', 'type', 'run', 'none')
+AXES = ('model', 'provider', 'stack_name', 'script', 'type', 'run', 'chat', 'none')
 
 
 def axis(r, by):
