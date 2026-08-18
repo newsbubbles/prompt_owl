@@ -24,7 +24,12 @@ prowl/tools/        {@tool(...)} implementations, each a folder with tool.py
 prowl/studio/       the local studio: server.py, core.py, history.py, embed.py, web/
 prowl/prompts/      the bundled prompt library
 skills/             the two agent skills above
+workspaces/         five worked example workspaces, three with recorded runs
 ```
+
+`prowl-studio --root workspaces` opens the examples without touching the user's own workspace
+root. `workspaces/demo/sketch/broken.prowl` is an intentionally invalid fixture: it exists to
+exercise the error panel, so do not treat its errors as a bug or copy anything out of it.
 
 ## Install
 

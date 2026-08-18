@@ -1,0 +1,5 @@
+# The Unluckiest Number
+Across all the world's cultures, one number is treated as unlucky more often than any other. That
+number is:
+
+{unluckiest:number(8, 1.0)}

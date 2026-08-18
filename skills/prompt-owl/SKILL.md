@@ -243,6 +243,18 @@ since whoever made the bundle wrote it; the entries are checked regardless.
 call, and `@file` reads and writes local files while `@search` and `@navigate` fetch the web. An
 imported prompt is somebody else's code.
 
+## Worked examples
+
+`workspaces/` in the repo holds five, and `prowl-studio --root workspaces` opens them without
+touching the user's own root. Three ship with `runs/history.jsonl`, so History has real values
+without spending anything, which makes them the fastest way to see what a feature does before
+building one.
+
+`demo` (inputs, `.prout`, and an intentionally invalid fixture at `sketch/broken.prowl` whose
+errors are the point), `bench` (a capability ladder), `naming` (variety of a model's naming prior),
+`numerology` (numeric distributions), `translate` (a 16-language input sweep, cross-model, with an
+in-language-instruction arm). `workspaces/README.md` says what each one demonstrated when it ran.
+
 ## The loop that produces a result
 
 1. `validate` the stack. Fix errors before spending anything.

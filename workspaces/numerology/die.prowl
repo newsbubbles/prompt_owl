@@ -1,0 +1,4 @@
+# One Roll
+A fair six-sided die has been rolled and is lying on the table. The face showing is:
+
+{roll:number(8, 1.0)}

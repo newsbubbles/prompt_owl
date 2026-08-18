@@ -1,0 +1,39 @@
+## Capability ladder
+
+Eight tasks, each harder than the one before it. The last few depend on the answers above them.
+
+### 1. Copy
+The passcode is HELIOTROPE.
+Write the passcode exactly as it appears:
+- Passcode: {copy:word(12, 0.0)}
+
+### 2. Extract
+Manifest: 14 crates of rope, 7 crates of tar, 23 crates of salt.
+How many crates of salt are listed?
+- Salt crates: {extract:number(8, 0.0)}
+
+### 3. Choose
+A compass rose carries the directions north, south, east and west.
+The sun rises in which one of them?
+- Direction: {choose:word(8, 0.0)}
+
+### 4. Decide
+Is 91 a prime number? Answer true or false:
+- Prime: {prime:bool(6, 0.0)}
+
+### 5. Count
+Crew: Halda, Ivo, Merrow, Pell, Sanda, Tiber.
+How many names are in the crew list?
+- Crew size: {count:number(8, 0.0)}
+
+### 6. Combine
+Add the salt crates ({extract}) to the crew size ({count}):
+- Total: {total:number(8, 0.0)}
+
+### 7. Constrain
+Write exactly three cargo labels as a numbered list, each label at most three words:
+{labels:list(120, 0.3)}
+
+### 8. Compare
+Of the two numbers written above, {extract} and {count}, the larger one is:
+- Larger: {larger:number(8, 0.0)}

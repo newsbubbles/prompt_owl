@@ -1,0 +1,28 @@
+<!-- FIXTURE: every construct below is INTENTIONALLY INVALID.
+     It exists to exercise the studio's error panel. Do not copy anything from this file.
+     Note: prose here uses the inert placeholder form (max_tokens, temperature) on purpose --
+     an arg list starting with a digit would declare for real, backticks or not. -->
+
+## Broken
+A type with no parentheses declares nothing, so `verdict` is never generated. It is either
+{verdict:bool(max_tokens, temperature)} to declare it here, or {verdict} to splice one declared
+earlier:
+- Verdict: {verdict:bool}
+
+This one runs away because no blank line follows it, so the shape resolves to inline and 1024
+tokens get truncated to the first line:
+{story(1024, 0.8)}
+The next line arrives too soon.
+
+`stops` is not an option -- the real name is `stop`, and that typo is what silently disabled stop
+sequences on every auto-continuation before 0.2:
+- Note: {note(30, 0.4, stops=".")}
+
+Prose showing the syntax stays inert because the arg list does not start with an integer:
+{variable_name(max_tokens, temperature)}
+
+Braces inside a prowl block are masked, so this is never declared:
+
+```prowl
+{example(64, 0.2)}
+```

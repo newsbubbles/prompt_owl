@@ -1,0 +1,8 @@
+## Instruction for the Translator
+An instruction is being prepared for a translator. In English it reads: write the source phrase
+above the way a fluent speaker of {language} would actually say it, and give the phrase only.
+
+The same instruction, written in {instruction_language} by a native speaker, on one line, with no
+final punctuation mark:
+
+{instruction:line(160, 0.2)}

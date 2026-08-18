@@ -1,0 +1,48 @@
+{
+ "full_1": {
+  "atomic": false,
+  "chat": false,
+  "inputs": {},
+  "models": [
+   "meta-llama/llama-3.1-8b-instruct",
+   "openai/gpt-4o-mini"
+  ],
+  "provider": null,
+  "scripts": [
+   "lucky_yours",
+   "meaningful",
+   "random_1_100"
+  ],
+  "sweep": []
+ },
+ "luck": {
+  "atomic": false,
+  "inputs": {},
+  "models": [],
+  "provider": null,
+  "scripts": [
+   "lucky_yours"
+  ],
+  "sweep": []
+ },
+ "meaning": {
+  "atomic": false,
+  "inputs": {},
+  "models": [],
+  "provider": null,
+  "scripts": [
+   "meaningful"
+  ],
+  "sweep": []
+ },
+ "random-number": {
+  "atomic": false,
+  "inputs": {},
+  "models": [],
+  "provider": null,
+  "scripts": [
+   "random_1_100"
+  ],
+  "sweep": []
+ }
+}

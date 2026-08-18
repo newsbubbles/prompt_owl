@@ -1,0 +1,26 @@
+{
+ "norse-name": {
+  "atomic": false,
+  "inputs": {},
+  "models": [
+   "meta-llama/llama-3.1-8b-instruct"
+  ],
+  "provider": "DeepInfra",
+  "scripts": [
+   "w_norse",
+   "name"
+  ]
+ },
+ "wuxia-name": {
+  "atomic": false,
+  "inputs": {},
+  "models": [
+   "meta-llama/llama-3.1-8b-instruct"
+  ],
+  "provider": "DeepInfra",
+  "scripts": [
+   "w_wuxia",
+   "name"
+  ]
+ }
+}

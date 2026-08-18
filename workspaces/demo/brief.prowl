@@ -1,0 +1,8 @@
+## Brief
+{topic}
+
+Name the single sharpest question this brief has to answer:
+- Question: {question:line(40, 0.3)}
+
+How many distinct claims does it need to support?
+- Claims: {claims:number(8, 0.0)}

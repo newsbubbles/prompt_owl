@@ -173,6 +173,22 @@ Or from the terminal, without writing any Python:
 prowl -folder=. hello
 ```
 
+### Or start from the examples
+
+Five worked workspaces ship in [`workspaces/`](workspaces/). Point the studio at them and they are
+all there, three of them with recorded runs so the History tab has real data before you spend
+anything:
+
+```bash
+prowl-studio --root workspaces --env .env --open
+```
+
+`demo` is the smallest complete thing, and includes a deliberately broken script so you can see
+what the error panel says. `bench` is a capability ladder. `naming` measures how much variety a
+model actually has. `numerology` asks what symbolic furniture is in one. `translate` sweeps an
+input across 16 languages and compares models on it. Each is explained in
+[`workspaces/README.md`](workspaces/README.md).
+
 ---
 
 ## Writing prowl

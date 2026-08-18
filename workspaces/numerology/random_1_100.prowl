@@ -1,0 +1,5 @@
+# A Number Between 1 and 100
+Someone is asked to name a number between 1 and 100, off the top of their head, and does not think
+about it first. The number they say is:
+
+{pick:number(8, 1.0)}

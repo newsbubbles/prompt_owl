@@ -1,0 +1,21 @@
+## The Phrase in {language}
+{instruction}:
+
+{translation:line(120, 0.3)}
+
+## Back Into English
+That same sentence translated back into English word by word, keeping any awkwardness rather than
+smoothing it over:
+
+{literal:line(120, 0.3)}
+
+## Fidelity
+Scoring how much of the source phrase's meaning survived the round trip, from 1 for lost to 10 for
+identical, the score is:
+
+{fidelity:number(8, 0.3)}
+
+## Register
+The translation's level of formality, in one word, as formal, neutral or casual:
+
+{register:word(6, 0.3)}

@@ -1,0 +1,9 @@
+# A Number That Carries Weight
+Of all the numbers, the one you find most meaningful is:
+
+{number:number(8, 1.0)}
+
+## What It Carries
+What that number means, in two or three sentences:
+
+{meaning:text(160, 1.0)}

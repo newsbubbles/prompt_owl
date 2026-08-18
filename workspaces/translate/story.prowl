@@ -1,0 +1,7 @@
+## Story
+Now tell a story about a time in your life when you were responsible for someone else:
+{story_responsibility(640, 0.8)}
+
+### How did that make you feel?
+{story_feelings(320, 0.0)}
+

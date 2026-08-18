@@ -1,0 +1,50 @@
+{
+ "directions-16": {
+  "atomic": false,
+  "inputs": {
+   "language": "Mandarin Chinese\nSpanish\nHindi\nArabic\nBengali\nPortuguese\nRussian\nJapanese\nFrench\nGerman\nKorean\nTurkish\nVietnamese\nItalian\nSwahili\nPolish"
+  },
+  "models": [],
+  "provider": null,
+  "scripts": [
+   "input_asking_directions",
+   "translation"
+  ],
+  "sweep": [
+   "language"
+  ]
+ },
+ "greeting-16": {
+  "atomic": false,
+  "inputs": {
+   "language": "Mandarin Chinese\nSpanish\nHindi\nArabic\nBengali\nPortuguese\nRussian\nJapanese\nFrench\nGerman\nKorean\nTurkish\nVietnamese\nItalian\nSwahili\nPolish"
+  },
+  "models": [],
+  "provider": null,
+  "scripts": [
+   "input_greeting",
+   "translation"
+  ],
+  "sweep": [
+   "language"
+  ]
+ },
+ "greeting-in-16": {
+  "atomic": false,
+  "chat": false,
+  "inputs": {
+   "instruction_language": "Japanese",
+   "language": "Mandarin Chinese\nSpanish\nHindi\nArabic\nBengali\nPortuguese\nRussian\nJapanese\nFrench\nGerman\nKorean\nTurkish\nVietnamese\nItalian\nSwahili\nPolish"
+  },
+  "models": [],
+  "provider": null,
+  "scripts": [
+   "input_greeting",
+   "instruct_in",
+   "translation_in"
+  ],
+  "sweep": [
+   "language"
+  ]
+ }
+}

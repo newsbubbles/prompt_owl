@@ -1,0 +1,9 @@
+# Your Lucky Number
+You have a lucky number, the one you would give if someone asked you right now. It is:
+
+{lucky:number(8, 1.0)}
+
+## Why That One
+The reason it is that number, in one sentence:
+
+{because:line(80, 1.0)}
