@@ -2,6 +2,10 @@
 
 ## 0.2.0 (unreleased)
 
+Not on PyPI yet — `pip install -e ".[studio]"` from a clone. The headline is that a declaration
+can say what kind of value it expects, and that there is now a studio for running a stack across
+several models and looking at what each variable actually does over many runs.
+
 ### Added
 
 - **Variable types.** A declaration may name the kind of value it expects:
@@ -23,7 +27,7 @@
 
   | type | stops at | holds |
   |---|---|---|
-  | `word` | newline or space | the first word |
+  | `word` | newline | the first word, stripped of surrounding punctuation |
   | `line` | newline | one line, invalid if it ends in `:` |
   | `number` | newline | the last number in the text |
   | `bool` | newline | `true`/`false`, invalid if neither |
@@ -68,7 +72,23 @@
 
 - `temperature` is optional; it defaults to `prowl.TEMPERATURE` (0.0).
 
-- **`prowl studio`** — a local sandbox for writing, arranging and running stacks.
+- **Chat endpoints, by assistant prefill.** The growing document goes into a pre-started assistant
+  turn and the model carries on writing it. The mechanism is unchanged and only the envelope
+  differs, so `VLLM` normalises a chat choice back into a completion choice and `fill()`,
+  `resolve()` and every stop rule stay unaware of which endpoint answered. Set per run with
+  `chat=` on `ProwlStack.run`, or `PROWL_CHAT` in the environment.
+
+  Measured on a capability ladder, four models, provider pinned: completions and chat prefill score
+  identically on three of four, and mistral-nemo drops exactly one rung — answering `'Your'` where
+  it should copy a word, the model replying *as a turn* instead of continuing. So the prefix
+  mechanism survives on chat endpoints. What it costs is tokens: 19–91% more, because the user turn
+  is re-sent on every declaration.
+
+  This also makes otherwise-unusable models work. `gpt-4o-mini` restates the prompt verbatim on
+  `/v1/completions` — OpenRouter serves chat-only models there by adapting them, and the adapter
+  gives itself away — but continues correctly through prefill.
+
+- **`prowl studio`** — a local sandbox for writing, arranging, running and **measuring** stacks.
   `pip install prompt-owl[studio]`, then `prowl-studio`. Loopback only by default: a run spends
   money and `@file` reads the filesystem.
 
@@ -85,6 +105,72 @@
 
   `prowl/studio/core.py` is the single definition of "assemble a stack and check it", and
   `prowl/mcp.py` now imports it rather than keeping its own.
+
+  A **stack** is a saved primitive, not a gesture: `stacks.json` beside the scripts holds the
+  order, its inputs, its model pool, `atomic`, `chat`, which inputs sweep, and the provider pin —
+  a saved comparison that does not record its backend is not reproducible.
+
+- **Run history.** Every filled declaration is appended to `runs/history.jsonl` in the workspace,
+  with model, provider, script, type, temperature, tokens, truncation and the inputs that produced
+  it. One fill is an anecdote; the properties worth knowing only exist across runs.
+
+  Statistics are cut along a chosen **axis** — models, providers, scripts, stacks, runs, or **any
+  input the samples carry** — plus a pooled row across all groups, because pooled and split answer
+  different questions. Three models each answering `7` every time is entropy 0.00 three times and
+  0.00 pooled; three models each stuck on a *different* number is 0.00 three times and 1.58 pooled.
+
+  Per group: n, distinct count and ratio, normalised entropy `H/log n` (1.00 when every run
+  differed, 0.00 when they all agreed), and mean ± sample sd with a strip plot for numeric values.
+
+  **Truncated `word`/`line`/`number`/`bool` samples are excluded by default** and the count is
+  shown as `−N`. A truncated `text` is a long answer cut short and still says what it says; a
+  truncated bounded value is a model that never reached the stop, and for `number` the
+  last-number-wins rule then lifts a figure out of mid-sentence. Averaging those gave one model a
+  mean of 33.1 over values including `0.75`. It is a judgement, so it is a toggle.
+
+- **Clustering by meaning.** Counting distinct strings answers "how many names"; it cannot answer
+  "how many answers", because the same answer written twice is two strings. Distinct values are
+  embedded and leader-clustered — against the leader, never a running mean, which drifts across the
+  space and swallows the corpus. 32 back-translations were 32 distinct strings (100%, no
+  information) and 14 clusters, one holding 19; the 13 singletons were the actual failures.
+
+  OpenRouter serves `/v1/embeddings` on the same key even though its model catalogue lists no
+  embedding model at all, which nearly got this written off as impossible.
+
+- **Input sweeps.** Any input can be marked to vary: its box becomes a list, one value per line,
+  and the runner walks the cross product across repeats and models. Sixteen languages is a research
+  question; retyping it sixteen times is why the question does not get asked.
+
+- **Export** as `csv` (BOM'd, so Excel reads the UTF-8), `jsonl`, `json`, or as training pairs in
+  `messages` (OpenAI fine-tuning) and `alpaca` shapes. The training formats exist because a run is
+  one token sequence whose spans are named: `completion[:start]` is exactly the prompt that
+  produced `completion[start:end]`, so one run yields **one pair per declaration**, and the prompt
+  is the real growing prompt with every earlier value spliced in — not a template with the inputs
+  pasted back. Finished documents persist to `runs/documents.jsonl`.
+
+- **Model capability probing.** The catalogue lists `stop` support; it cannot say whether a model
+  *continues a document*. `GET /api/model-probe` spends five tokens and classifies the answer as
+  `continues`, `echoes` (a chat-only model behind an adapter — use chat prefill), `empty`, or
+  `unsupported`. Models are probed when added to the pool and the chip is marked.
+
+- **Reasoning is disabled automatically.** Given `{answer:number(8)}` a thinking model spends all
+  eight tokens on reasoning and returns `""` with `finish_reason: length`, which prowl reports as
+  "no number in the completion" — sending you to inspect a prompt that was fine. 171 of the 284
+  stop-capable models on OpenRouter declare `reasoning`, so this is the common case, and prowl
+  declarations are bounded by design. The studio sends `reasoning: {enabled: false}` unless the
+  caller set it, and badges those models `think`.
+
+- **`GET /api/probe`** sends one token down `/v1/completions` and `/v1/chat/completions` and reports
+  what answered, so "is my Ollama / vLLM / OpenRouter set up right" is one request rather than a log
+  hunt.
+
+- **Themes** — `owl`, `paper`, `ember`, `terminal`, `slate`. A theme is eleven CSS variables and
+  nothing else; no rule in the stylesheet names a colour directly.
+
+- **Agent skills** in [`skills/`](skills/): `prowl-script` for writing the language, `prompt-owl`
+  for running the studio and its API. `AGENTS.md` points at both for harnesses that read it, and
+  `.claude/launch.json` defines the server so a browser pane can own the process from a fresh
+  clone.
 
 - **Stream levels are cumulative.** `StreamLevel.covers()` orders them
   `none < script < variable < token`, so asking for tokens also delivers the settled variable and
@@ -125,6 +211,21 @@
   0 bytes, which is why `ProwlStack(folder='prowl/prompts/pov/')` did not work at all. `None` now
   means "could not read" and never "was empty", and a task with no code is refused rather than
   stored.
+
+- **A stop firing on the first token left a variable permanently empty.** Some models open a
+  completion with `\n`, which fires the `word`/`line`/`number` stop at offset zero and returns
+  nothing — indistinguishable from a model with nothing to say. An empty first result now retries
+  once with stops removed, and says so.
+
+- **`word` read punctuation as a value.** `' "Evelyn Deveraux"'` became `'"Evelyn'` and `' |'`
+  became `'|'`. Words are stripped of surrounding quotes, brackets and punctuation now.
+
+- **The studio's syntax overlay drifted from the caret**, 0.47px per character — three characters
+  by column 40, resetting each line, which reads as a fixed offset rather than as drift. The
+  stylesheet sets the font on the `<pre>`, and the text lives in a `<code>` inside it, where the
+  browser's own stylesheet says `code { font-family: monospace }` and beats inheritance. The rule
+  already carried a comment about setting every property affecting glyph advance on both elements;
+  it was set on both elements the rule named.
 
 - **Scripts are read as UTF-8.** `open(path, "r")` used the locale encoding, which is cp1252 on
   Windows — so a script containing an em dash raised, was swallowed by the bare `except`, and
