@@ -393,7 +393,7 @@ class ProwlStack:
             r = await self.fill(fc, variables=fill.variables)
             return r.completion
 
-    async def run(self, tasks:list[str], atomic:bool=False, variables:dict=None, inputs:dict=None, stops:list[str]=None, prefix=None, continue_ratio=0.5, stream_level=prowl.StreamLevel.NONE, model:str=None, extra:dict=None):
+    async def run(self, tasks:list[str], atomic:bool=False, variables:dict=None, inputs:dict=None, stops:list[str]=None, prefix=None, continue_ratio=0.5, stream_level=prowl.StreamLevel.NONE, model:str=None, extra:dict=None, chat:bool=None):
         if variables is None:
             variables = {}
         if inputs:
@@ -425,6 +425,7 @@ class ProwlStack:
                 script_name=task,
                 model=model,
                 extra=extra,
+                chat=chat,
             )
             completion = fill.completion
             variables = fill.variables
@@ -461,6 +462,7 @@ class ProwlStack:
             script_name=None,
             model:str=None,
             extra:dict=None,
+            chat:bool=None,
         ) -> prowl.Return:
         if variables is None:
             variables = {}
@@ -479,6 +481,7 @@ class ProwlStack:
             silent=self.silent,
             model=model,
             extra=extra,
+            chat=chat,
         )
         
 StreamLevel = prowl.StreamLevel

@@ -50,6 +50,14 @@ class RenameBody(BaseModel):
     to: str
 
 
+class StackBody(BaseModel):
+    scripts: List[str]
+    inputs: Dict[str, str] = {}
+    models: List[str] = []
+    atomic: bool = False
+    provider: Optional[str] = None
+
+
 class CheckBody(BaseModel):
     scripts: List[str]
     inputs: Dict[str, str] = {}
@@ -191,6 +199,21 @@ def put_script(ws: str, name: str, body: ScriptBody):
     d = workspace.write(ws, name, body.prowl, prout=body.prout, folder=body.folder)
     d['outline'] = lang.outline(d['prowl'] or '')
     return d
+
+
+@app.get('/api/w/{ws}/stacks')
+def get_stacks(ws: str):
+    return {'stacks': workspace.stacks(ws)}
+
+
+@app.put('/api/w/{ws}/stacks/{name}')
+def put_stack(ws: str, name: str, body: StackBody):
+    return {'stacks': workspace.save_stack(ws, name, body.dict())}
+
+
+@app.delete('/api/w/{ws}/stacks/{name}')
+def delete_stack(ws: str, name: str):
+    return {'stacks': workspace.drop_stack(ws, name)}
 
 
 @app.post('/api/w/{ws}/script/{name}/rename')

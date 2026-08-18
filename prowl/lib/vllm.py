@@ -9,19 +9,54 @@ import aiohttp
 from .log import log
 from .error import APIError
 
+# What the user turn says when prowl is talking to a chat endpoint. The document itself goes in a
+# pre-started assistant turn, so this only has to stop the model treating the document as a
+# question. Override with PROWL_CHAT_PREFILL.
+PREFILL = ("Continue the document below exactly where it stops. "
+           "Write only the continuation: no preamble, no repetition, no commentary.")
+
+
 class VLLM:
-    def __init__(self, base_url, model="mistralai/Mistral-7B-Instruct-v0.2"):
+    def __init__(self, base_url, model="mistralai/Mistral-7B-Instruct-v0.2", chat=None):
         # read env here rather than at import: callers load_dotenv() after importing prowl
         endpoint = os.getenv('PROWL_COMPLETIONS_ENDPOINT') or "/v1/completions"
         api_key = os.getenv('PROWL_VENDOR_API_KEY') or None
         self.url = f"{base_url}{endpoint}"
-        log.info(f"Endpoint URL: {self.url}, model: {model}")
+        # Prefix continuation on a chat endpoint is assistant prefill: the growing document is a
+        # pre-started assistant turn and the model carries on writing it. The mechanism is the
+        # same, the envelope is not, so everything downstream sees a completions-shaped response.
+        if chat is None:
+            chat = '/chat/' in endpoint or (os.getenv('PROWL_CHAT') or '').lower() in ('1', 'true', 'yes')
+        self.chat = bool(chat)
+        if self.chat and '/chat/' not in endpoint:
+            self.url = f"{base_url}/v1/chat/completions"
+        self.prefill = os.getenv('PROWL_CHAT_PREFILL') or PREFILL
+        log.info(f"Endpoint URL: {self.url}, model: {model}{', chat prefill' if self.chat else ''}")
         self.headers = {"Content-Type": "application/json"}
         # If provided, add the API key to the Authorization header.
         if api_key:
             self.headers["Authorization"] = f"Bearer {api_key}"
         self.data = {"model": model, "max_tokens": 512, "temperature": 0.0}
         self.usage = {}
+
+    def body(self, prompt, kwargs):
+        d = self.data.copy()
+        if self.chat:
+            d["messages"] = [{"role": "user", "content": self.prefill},
+                             {"role": "assistant", "content": prompt}]
+        else:
+            d["prompt"] = prompt
+        d.update(kwargs)
+        return d
+
+    @staticmethod
+    def as_completion(r):
+        # A chat choice carries `message.content`; a completion choice carries `text`. Normalising
+        # here means fill(), resolve() and every stop rule stay unaware of which one answered.
+        for c in r.get('choices') or []:
+            if 'text' not in c:
+                c['text'] = ((c.get('message') or {}).get('content')) or ''
+        return r
 
     class Usage:
         # For use with calculating and aggregating usage from outside this module.
@@ -75,9 +110,7 @@ class VLLM:
         """
         Synchronous request method with enhanced error handling.
         """
-        data = self.data.copy()
-        data.update({"prompt": prompt})
-        data.update(kwargs)
+        data = self.body(prompt, kwargs)
         st = time.time()
         try:
             response = requests.post(self.url, headers=self.headers, data=json.dumps(data))
@@ -99,6 +132,7 @@ class VLLM:
             log.error(f"Failed to decode JSON response: {jde}")
             log.error(f"Response text: {response.text}")
             raise
+        VLLM.as_completion(r)
         # Update usage with elapsed time
         if "usage" in r:
             self.usage = r["usage"]
@@ -111,9 +145,7 @@ class VLLM:
         """
         Asynchronous request method with enhanced error handling.
         """
-        data = self.data.copy()
-        data.update({"prompt": prompt})
-        data.update(kwargs)
+        data = self.body(prompt, kwargs)
         n = kwargs.get('n', 1)
         if streaming:
             data['stream'] = True
@@ -151,7 +183,10 @@ class VLLM:
                                     for i, v in enumerate(r.get('choices', [])):
                                         if len(choices[i]) == 0:
                                             choices[i] = {'index': i, 'text': '', 'logprobs': None, 'finish_reason': None}
-                                        choices[i]['text'] += v.get('text') or ''
+                                        # completions stream `text`, chat streams `delta.content`
+                                        choices[i]['text'] += (v.get('text')
+                                                               or (v.get('delta') or {}).get('content')
+                                                               or '')
                                         # last non-null wins. OpenRouter repeats the reason on the
                                         # usage chunk, but a vendor sending null there would erase
                                         # it, and a lost 'length' is a lost truncation.
@@ -185,6 +220,7 @@ class VLLM:
                         # a 200 without choices is an error body wearing a success costume
                         if 'choices' not in r:
                             raise APIError(response.status, "response carried no `choices`", data=r)
+                        VLLM.as_completion(r)
                         # Add elapsed time to usage data
                         if 'usage' in r:
                             r['usage']['elapsed'] = time.time() - st

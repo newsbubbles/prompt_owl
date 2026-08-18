@@ -56,9 +56,10 @@ async function boot() {
   restoreModels()
   if (!S.models.length && h.model) S.models = [h.model]
   renderModels()
-  $('#status').textContent = h.has_key ? `budget ${h.budget.toLocaleString()} tok`
-                                       : 'no PROWL_VENDOR_API_KEY — runs will fail'
-  $('#status').classList.toggle('bad', !h.has_key)
+  S.budget = h.budget
+  S.spent = {prompt: 0, completion: 0, cost: 0, elapsed: 0, runs: 0}
+  S.noKey = !h.has_key
+  renderSpend()
   $('#status').title = `${h.endpoint || 'no endpoint'} · ${h.root}`
 
   const pick = $('#ws-pick')
@@ -91,6 +92,7 @@ async function loadBrowser() {
     ul.append(el('li', 'muted', 'No .prowl files here yet — press + to make one.'))
   for (const [name, folders] of Object.entries(d.collisions || {}))
     ul.append(el('li', 'muted bad', `name collision: ${name} in ${folders.join(', ')}`))
+  await loadStacks()
   renderStack()
 }
 
@@ -178,9 +180,61 @@ function renderStack() {
     }
     box.append(chip)
   })
-  const atomic = $('#atomic').checked
-  box.append(el('span', 'mode', atomic ? 'each script runs alone' : 'one growing prompt'))
+  const save = el('button', 'ghost wide save', '⌸ save stack')
+  save.type = 'button'
+  save.title = 'save this order, its inputs and its model pool under a name'
+  save.onclick = saveStack
+  box.append(save)
   refresh()
+}
+
+// ---------------------------------------------------------------- saved stacks
+
+async function loadStacks() {
+  const d = await api(`/w/${S.ws}/stacks`)
+  const names = Object.keys(d.stacks || {}).sort()
+  $('#stacks-head').hidden = !names.length
+  const ul = $('#stacks'); ul.replaceChildren()
+  for (const name of names) {
+    const spec = d.stacks[name]
+    const li = el('li', 'entry')
+    const b = el('button', 'row')
+    b.type = 'button'
+    b.title = `${spec.scripts.join(' → ')}${spec.models && spec.models.length ? '\n' + spec.models.join(', ') : ''}`
+    b.append(el('span', 'name', name), el('span', 'sub', `${spec.scripts.length}`))
+    b.onclick = () => applyStack(spec)
+    li.append(b, act('×', `delete stack ${name}`, async () => {
+      if (!confirm(`Delete stack ${name}?`)) return
+      await api(`/w/${S.ws}/stacks/${name}`, {}, 'DELETE')
+      await loadStacks()
+    }))
+    ul.append(li)
+  }
+}
+
+async function applyStack(spec) {
+  S.stack = [...spec.scripts]
+  S.inputs = {...S.inputs, ...(spec.inputs || {})}
+  if (spec.models && spec.models.length) { S.models = [...spec.models]; persistModels(); renderModels() }
+  if (spec.provider !== undefined && spec.provider !== null) $('#provider').value = spec.provider
+  $('#atomic').checked = !!spec.atomic
+  persistInputs()
+  S.open = S.stack[0] || null
+  await loadBrowser()
+  await openScript(S.open)
+}
+
+async function saveStack() {
+  if (!S.stack.length) return
+  const name = askName('save this stack as', S.stack.join('-').slice(0, 40))
+  if (!name) return
+  try {
+    await api(`/w/${S.ws}/stacks/${name}`, {
+      scripts: S.stack, inputs: S.inputs, models: S.models,
+      atomic: $('#atomic').checked, provider: ($('#provider').value || '').trim() || null,
+    }, 'PUT')
+    await loadStacks()
+  } catch (e) { alert(e.message) }
 }
 
 async function openScript(name) {
@@ -447,6 +501,7 @@ async function go() {
         showPane('errors')
       } else if (ev === 'done') {
         if (slot) slot.done = d
+        bank(d.usage)
         if (multi) renderCompare()
         else { S.result = d; d.ok ? settle(d) : (showErrors(d.errors || [], d.failed_variable), showPane('errors')) }
       } else if (ev === 'finished' && multi) {
@@ -459,6 +514,36 @@ async function go() {
   } finally {
     $('#run').hidden = false; $('#stop').hidden = true
   }
+}
+
+// What this session has actually spent. A static budget ceiling told you nothing you did not
+// already know; the running total is the number you check before starting a sweep.
+function renderSpend() {
+  const p = $('#status')
+  if (S.noKey) {
+    p.textContent = 'no PROWL_VENDOR_API_KEY — runs will fail'
+    p.classList.add('bad')
+    return
+  }
+  const s = S.spent
+  p.classList.remove('bad')
+  if (!s.runs) { p.textContent = 'nothing spent yet'; return }
+  const tok = s.prompt + s.completion
+  p.textContent = `${s.runs} run${s.runs > 1 ? 's' : ''} · ${tok.toLocaleString()} tok · ` +
+                  `$${s.cost.toFixed(6)} · ${s.elapsed.toFixed(1)}s`
+  p.title = `${s.prompt.toLocaleString()} prompt + ${s.completion.toLocaleString()} completion\n` +
+            `budget per run ${S.budget.toLocaleString()} completion tokens`
+}
+
+function bank(usage) {
+  if (!usage) return
+  const s = S.spent
+  s.prompt += usage.prompt_tokens || 0
+  s.completion += usage.completion_tokens || 0
+  s.cost += usage.cost || 0
+  s.elapsed += usage.elapsed || 0
+  s.runs += 1
+  renderSpend()
 }
 
 const key = m => m || '(default)'

@@ -461,7 +461,7 @@ class prowl:
         return value, ok, truncated
 
     @staticmethod
-    async def fill(template:str, stops:list[str]=None, variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None, extra:dict=None):
+    async def fill(template:str, stops:list[str]=None, variables:dict[str,Variable]=None, callbacks:dict=None, continue_ratio=0.0, stream_level=StreamLevel.NONE, stop_event=None, token_event=None, variable_event=None, script_name=None, silent:bool=False, model:str=None, extra:dict=None, chat:bool=None):
         if variables is None:
             variables = {}
         stops = stops or prowl.STOPS
@@ -486,6 +486,7 @@ class prowl:
         llm = VLLM(
             f"{os.getenv('PROWL_VLLM_ENDPOINT')}",
             model=model or os.getenv('PROWL_MODEL'),
+            chat=chat,
         )
         # accumulate token usage here
         usage = VLLM.Usage()

@@ -181,7 +181,7 @@ aside { border-right: 1px solid var(--line); background: var(--panel); overflow:
 .chip .x { background: none; border: 0; color: var(--dim); padding: 0 2px; font-size: 14px; line-height: 1; }
 .chip .x:hover { color: var(--bad); }
 .arrow { color: var(--dim); font-size: 12px; }
-.mode { margin-left: auto; color: var(--dim); font-size: 11px; font-style: italic; }
+.save { margin-left: auto; }
 
 /* ---------------------------------------------------------------- editor
    A textarea over a highlighted <pre>. The two must lay out identically to the pixel, so every

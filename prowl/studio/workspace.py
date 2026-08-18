@@ -2,7 +2,7 @@
 # in the studio is a file you can also run from the CLI or hand to the MCP server, so the sandbox
 # never becomes a place where scripts live that prowl itself cannot see.
 
-import os, re
+import os, re, json
 
 # Strict, because these become path segments and script names, and a script name is a key in
 # ProwlStack.tasks.
@@ -117,6 +117,36 @@ def write(ws, name, source, prout=None, folder=''):
         with open(p, 'w', encoding='utf-8', newline='') as fh:
             fh.write(prout)
     return read(ws, name)
+
+
+# A stack -- which scripts, in what order, with what inputs -- is the unit of work, so it is worth
+# saving next to the scripts rather than living in one browser's local storage.
+def stacks(ws):
+    p = path(ws, 'stacks.json')
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        raise WorkspaceError(f"stacks.json in `{ws}` is unreadable: {e}")
+
+
+def save_stack(ws, name, spec):
+    valid(name, 'stack')
+    all = stacks(ws)
+    all[name] = spec
+    with open(path(ws, 'stacks.json'), 'w', encoding='utf-8', newline='') as f:
+        json.dump(all, f, indent=1, sort_keys=True)
+    return all
+
+
+def drop_stack(ws, name):
+    all = stacks(ws)
+    all.pop(name, None)
+    with open(path(ws, 'stacks.json'), 'w', encoding='utf-8', newline='') as f:
+        json.dump(all, f, indent=1, sort_keys=True)
+    return all
 
 
 def rename(ws, name, to):
